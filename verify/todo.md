@@ -6,7 +6,8 @@ Floci instance to validate the verifier, using the endpoint, credentials, and
 region supplied by `../floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket
-checks are implemented; the other operation checks remain failing stubs.
+and object listing checks are implemented; the other operation checks remain
+failing stubs.
 
 ## Setup and cleanup
 
@@ -38,8 +39,8 @@ checks are implemented; the other operation checks remain failing stubs.
 
 ## Listing operations
 
-- [ ] **ListObjects**: verify object keys, prefix filtering, and pagination.
-- [ ] **ListObjectsV2**: verify object keys, prefix filtering, and pagination.
+- [x] **ListObjects**: verify object keys, prefix filtering, and pagination.
+- [x] **ListObjectsV2**: verify object keys, prefix filtering, and pagination.
 
 ## Multipart operations
 
