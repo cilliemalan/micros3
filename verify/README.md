@@ -17,7 +17,10 @@ content, metadata and headers, overwrites, ranges, ETag conditions, and missing
 keys and buckets. HeadObject checks binary and empty objects, metadata and headers,
 overwrites, ranges, ETag conditions, and missing keys and buckets. The SDK
 exposes no response body for HEAD; the check does not inspect the wire for an
-improperly sent body. DeleteObject checks binary and empty objects, exact-key
+improperly sent body. CopyObject checks cross-bucket and self-copies, binary and
+empty objects, URL-encoded keys, metadata and headers, metadata replacement,
+overwrites, conditional copies, isolation, and missing keys and buckets.
+DeleteObject checks binary and empty objects, exact-key
 isolation, missing and repeated deletions, recreation, and missing buckets.
 DeleteObjects checks verbose and quiet responses, deletion of existing, empty
 and absent keys, repeat deletion, recreation, exact-key and bucket isolation,
@@ -57,7 +60,7 @@ environment file.
 `pnpm start` is an alias for the verifier and accepts the same options. Without
 a custom endpoint, the AWS SDK uses its default AWS S3 endpoint and credentials,
 so ensure the intended endpoint and credentials are configured before running.
-The bucket, PutObject, GetObject, HeadObject, DeleteObject, DeleteObjects,
+The bucket, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
 listing, CORS and encryption checks create uniquely named buckets and temporary
 objects or CORS configurations. They attempt cleanup even after failures;
 cleanup errors identify the affected resources, which may need manual removal.
@@ -66,15 +69,16 @@ owned by someone else; after an ambiguous SDK retry, manually inspect the named
 bucket. The repeat-creation and
 non-empty deletion checks also require PutObject, GetObject and DeleteObject
 support. The HeadObject and object listing checks require PutObject and DeleteObject support.
-The PutObject and GetObject checks require both operations and DeleteObject for cleanup.
+The PutObject, GetObject and CopyObject checks require PutObject and GetObject
+and DeleteObject for cleanup; CopyObject also requires cross-bucket access.
 The DeleteObject and DeleteObjects checks require PutObject and GetObject
 support, including metadata; DeleteObjects also uses DeleteObject for cleanup.
 The bucket listing check follows up to 1,000 pages when looking for its two test
 buckets.
 
 The configured Floci instance currently accepts invalid bucket names, invalid
-CORS configurations and DeleteObjects requests with more than 1,000 keys, so
-those checks fail against it. They are retained to verify S3's validation rules.
+CORS configurations and DeleteObjects requests with more than 1,000 keys; its
+CopyObject metadata replacement also retains old headers. Those checks fail against it. They are retained to verify S3's validation rules.
 The CORS checks verify configuration APIs; they do not test HTTP preflight or
 response headers.
 
@@ -88,6 +92,6 @@ use isolated resource names, and clean up resources in `finally` even if an
 assertion fails. Add new sections to the suite list in `index.js`.
 
 Run `pnpm test:unit` to test the runner, startup behavior, bucket, PutObject,
-GetObject, HeadObject, DeleteObject, DeleteObjects, listing, CORS and encryption
+GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects, listing, CORS and encryption
 checks offline using mock services. This does not run the S3
 operation checks against a real endpoint.
