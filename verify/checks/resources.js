@@ -101,10 +101,24 @@ export function assertStatus(response, expected, operation) {
   assert.equal(response.$metadata?.httpStatusCode, expected, `${operation} HTTP status`);
 }
 
+// An error code may be a single code or an array of acceptable alternatives.
+function assertErrorCode(error, code, operation) {
+  if (Array.isArray(code)) {
+    assert.ok(code.includes(error.name), `${operation} error code: expected one of ${code.join(', ')}, got ${error.name}`);
+  } else {
+    assert.equal(error.name, code, `${operation} error code`);
+  }
+}
+
+// S3 does not document whether a missing bucket or a missing upload takes
+// precedence when both are absent, so operations addressing an upload in a
+// missing bucket may report either.
+export const MISSING_BUCKET_UPLOAD_CODES = Object.freeze(['NoSuchBucket', 'NoSuchUpload']);
+
 export async function assertMissing(action, operation, errorCode) {
   await assert.rejects(action, error => {
     assert.equal(status(error), 404, `${operation} should return HTTP 404`);
-    if (errorCode) assert.equal(error.name, errorCode, `${operation} error code`);
+    if (errorCode) assertErrorCode(error, errorCode, operation);
     return true;
   }, `${operation} should reject a missing bucket`);
 }
@@ -143,7 +157,7 @@ export async function assertS3Error(client, command, expectedStatus, code, opera
     if (!embeddedError(command, error)) {
       assert.equal(status(error), expectedStatus, `${operation} should return HTTP ${expectedStatus}`);
     }
-    assert.equal(error.name, code, `${operation} error code`);
+    assertErrorCode(error, code, operation);
     return true;
-  }, `${operation} should reject with ${code}`);
+  }, `${operation} should reject with ${[code].flat().join(' or ')}`);
 }

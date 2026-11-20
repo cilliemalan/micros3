@@ -78,6 +78,16 @@ test('UploadPart verifies parts and completion, isolating and cleaning repeated 
   assert.equal(client.buckets.get('existing').objects.get('keep').toString(), 'keep');
 });
 
+test('UploadPart accepts NoSuchUpload for an upload in a missing bucket', async () => {
+  // S3 does not document which error takes precedence when both are missing.
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof UploadPartCommand && !service.buckets.has(command.input.Bucket)) throw error('NoSuchUpload');
+    return next();
+  });
+  await run({ client });
+  assert.equal(client.buckets.size, 0);
+});
+
 test('UploadPart detects bad responses, part state, errors and assembled bytes', async () => {
   for (const mode of ['status', 'etag', 'initial parts', 'order', 'size', 'replacement', 'same key', 'neighbor', 'truncated', 'existing object', 'neighbor object', 'wrong key', 'missing upload', 'zero', 'too large', 'invalid code', 'wrong bucket', 'other bucket parts', 'complete status', 'content length', 'content', 'completed upload', 'aborted upload', 'missing bucket', 'missing bucket code']) {
     let uploads = 0, lists = 0, gets = 0;
@@ -86,7 +96,7 @@ test('UploadPart detects bad responses, part state, errors and assembled bytes',
         const { Bucket, Key, UploadId, PartNumber } = command.input;
         if (!service.buckets.has(Bucket)) {
           if (mode === 'missing bucket') return ok(200);
-          if (mode === 'missing bucket code') throw error('NoSuchUpload');
+          if (mode === 'missing bucket code') throw error('NoSuchKey');
           return next();
         }
         if (PartNumber === 0 || PartNumber === 10001) {

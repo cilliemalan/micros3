@@ -55,7 +55,7 @@ CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload
     This establishes an end-to-end discrepancy, not which operation loses it.
 - Floci returns `NoSuchUpload`/404 for UploadPart, AbortMultipartUpload and
   CompleteMultipartUpload when both the bucket and upload ID are missing. The
-  checks currently demand `NoSuchBucket`/404. AWS documents `NoSuchUpload` for
+  checks previously demanded `NoSuchBucket`/404 and now accept either code. AWS documents `NoSuchUpload` for
   missing uploads, but the operation docs do not specify which error takes
   precedence when both are missing. Do not classify this as a confirmed Floci
   defect without an AWS comparison. No AWS credentials were supplied and no AWS
@@ -72,12 +72,17 @@ CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload
       error code and distinguish embedded errors from ordinary 503 responses;
       add real-SDK HTTP regression tests for both embedded and normal errors.
       See [CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html).
-- [ ] Establish AWS's missing-bucket versus missing-upload error precedence for
+- [x] Establish AWS's missing-bucket versus missing-upload error precedence for
       UploadPart, AbortMultipartUpload and CompleteMultipartUpload with an
       isolated AWS test, or accept documented 404 alternatives if the contract
       does not guarantee precedence. Update the mock tests as well as the
       verifier. Correct [README.md](README.md), which currently presents this
       error-code difference as a confirmed Floci defect.
+      No AWS credentials were available, and the operation docs do not
+      guarantee precedence, so the checks now accept `NoSuchBucket` or
+      `NoSuchUpload` with HTTP 404 (`MISSING_BUCKET_UPLOAD_CODES` in
+      [resources.js](../verify/checks/resources.js)). An AWS comparison can
+      still narrow this later.
 - [ ] Report or track the confirmed Floci discrepancies and rerun the complete
       verifier when they are fixed; do not relax valid S3 assertions merely to
       make Floci pass.

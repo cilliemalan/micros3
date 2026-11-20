@@ -5,7 +5,7 @@ import {
   PutObjectCommand, UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { withUploadCleanup } from './multipart-cleanup.js';
-import { assertMissing, assertStatus, withBucket } from './resources.js';
+import { MISSING_BUCKET_UPLOAD_CODES, assertMissing, assertStatus, withBucket } from './resources.js';
 
 export async function verifyAbortMultipartUpload(client) {
   await withBucket(client, async ({ Bucket, retainForUploads }) => {
@@ -105,7 +105,7 @@ export async function verifyAbortMultipartUpload(client) {
   await withBucket(client, async ({ Bucket, retainForUploads }) => {
     await withUploadCleanup(client, Bucket, ['missing'], retainForUploads, async () => {
       assertStatus(await client.send(new DeleteBucketCommand({ Bucket })), 204, 'DeleteBucket setup');
-      await assertMissing(() => client.send(new AbortMultipartUploadCommand({ Bucket, Key: 'missing', UploadId: 'missing' })), 'AbortMultipartUpload missing bucket', 'NoSuchBucket');
+      await assertMissing(() => client.send(new AbortMultipartUploadCommand({ Bucket, Key: 'missing', UploadId: 'missing' })), 'AbortMultipartUpload missing bucket', MISSING_BUCKET_UPLOAD_CODES);
     });
   });
 }

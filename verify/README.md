@@ -115,10 +115,14 @@ CopyObject metadata replacement also retains old headers. Multipart listings omi
 confirm that every upload was discovered. Consequently the verifier retains the
 affected test buckets for manual inspection and cleanup. Floci also accepts a
 completion with an undersized non-final part. When the flag is normalized for
-investigation, Floci also loses the initiation's Cache-Control on completion and
-returns NoSuchUpload instead of NoSuchBucket when aborting or uploading a part in
-a missing bucket.
-Those checks fail against it. They are retained to verify S3's validation rules.
+investigation, Floci also loses the initiation's Cache-Control on completion.
+Those checks fail against it.
+
+When UploadPart, AbortMultipartUpload or CompleteMultipartUpload address an
+upload in a missing bucket, both the bucket and the upload are missing. S3 does
+not document which error takes precedence, so the checks accept either
+`NoSuchBucket` or `NoSuchUpload`, provided the status is 404. Floci returns
+`NoSuchUpload`, which is therefore not treated as a defect. They are retained to verify S3's validation rules.
 The CORS checks verify configuration APIs; they do not test HTTP preflight or
 response headers.
 

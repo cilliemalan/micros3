@@ -86,6 +86,16 @@ test('AbortMultipartUpload verifies isolation and cleans resources on repeated r
   assert.ok(client.buckets.get('existing').objects.has('keep'));
 });
 
+test('AbortMultipartUpload accepts NoSuchUpload for an upload in a missing bucket', async () => {
+  // S3 does not document which error takes precedence when both are missing.
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof AbortMultipartUploadCommand && !service.buckets.has(command.input.Bucket)) throw error('NoSuchUpload');
+    return next();
+  });
+  await run({ client });
+  assert.equal(client.buckets.size, 0);
+});
+
 test('AbortMultipartUpload detects incorrect status, errors, state and isolation', async () => {
   for (const mode of ['abort status', 'wrong key accepted', 'abort retained', 'same-key lost', 'neighbor lost', 'list truncated', 'parts retained', 'upload accepted', 'complete accepted', 'repeat accepted', 'missing accepted', 'old content', 'old headers', 'neighbor object', 'survivor parts', 'neighbor parts', 'survivor content', 'empty abort', 'wrong bucket accepted', 'other bucket parts', 'missing bucket', 'missing bucket code']) {
     let aborts = 0;
@@ -96,7 +106,7 @@ test('AbortMultipartUpload detects incorrect status, errors, state and isolation
       if (command instanceof AbortMultipartUploadCommand) {
         if (!service.buckets.has(command.input.Bucket)) {
           if (mode === 'missing bucket') return ok(204);
-          if (mode === 'missing bucket code') throw error('NoSuchUpload');
+          if (mode === 'missing bucket code') throw error('NoSuchKey');
           return next();
         }
         aborts++;

@@ -4,7 +4,7 @@ import {
   DeleteBucketCommand, GetObjectCommand, ListPartsCommand, PutObjectCommand, UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { withUploadCleanup } from './multipart-cleanup.js';
-import { assertMissing, assertS3Error, assertStatus, withBucket } from './resources.js';
+import { MISSING_BUCKET_UPLOAD_CODES, assertMissing, assertS3Error, assertStatus, withBucket } from './resources.js';
 
 export async function verifyCompleteMultipartUpload(client) {
   await withBucket(client, async ({ Bucket, retainForUploads }) => {
@@ -116,7 +116,7 @@ export async function verifyCompleteMultipartUpload(client) {
   await withBucket(client, async ({ Bucket, retainForUploads }) => {
     await withUploadCleanup(client, Bucket, ['missing'], retainForUploads, async () => {
       assertStatus(await client.send(new DeleteBucketCommand({ Bucket })), 204, 'DeleteBucket setup');
-      await assertS3Error(client, new CompleteMultipartUploadCommand({ Bucket, Key: 'missing', UploadId: 'missing', MultipartUpload: { Parts: [{ PartNumber: 1, ETag: '"missing"' }] } }), 404, 'NoSuchBucket', 'CompleteMultipartUpload missing bucket');
+      await assertS3Error(client, new CompleteMultipartUploadCommand({ Bucket, Key: 'missing', UploadId: 'missing', MultipartUpload: { Parts: [{ PartNumber: 1, ETag: '"missing"' }] } }), 404, MISSING_BUCKET_UPLOAD_CODES, 'CompleteMultipartUpload missing bucket');
     });
   });
 }

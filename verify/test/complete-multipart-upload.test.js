@@ -7,7 +7,7 @@ import {
   DeleteBucketCommand, DeleteObjectCommand, GetObjectCommand, ListMultipartUploadsCommand, ListPartsCommand,
   PutObjectCommand, S3Client, UploadPartCommand,
 } from '@aws-sdk/client-s3';
-import { assertS3Error } from '../checks/resources.js';
+import { MISSING_BUCKET_UPLOAD_CODES, assertS3Error } from '../checks/resources.js';
 import checks from '../checks/multipart.js';
 
 const run = checks.find(check => check.name === 'CompleteMultipartUpload').run;
@@ -82,6 +82,16 @@ test('CompleteMultipartUpload verifies completion and cleans isolated repeated r
   assert.ok(client.buckets.get('existing').objects.has('keep'));
 });
 
+test('CompleteMultipartUpload accepts NoSuchUpload for an upload in a missing bucket', async () => {
+  // S3 does not document which error takes precedence when both are missing.
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof CompleteMultipartUploadCommand && !service.buckets.has(command.input.Bucket)) throw error('NoSuchUpload');
+    return next();
+  });
+  await run({ client });
+  assert.equal(client.buckets.size, 0);
+});
+
 test('CompleteMultipartUpload detects incorrect validation, state, response and content', async () => {
   for (const mode of ['order', 'bad etag', 'missing part', 'small part', 'error code', 'error status', 'wrong key', 'wrong bucket', 'cross bucket content', 'missing upload', 'aborted', 'old object', 'neighbor object', 'parts', 'truncation', 'status', 'bucket', 'key', 'etag', 'body', 'length', 'object etag', 'type', 'cache', 'metadata', 'completed', 'completed parts', 'survivor', 'recovery', 'empty', 'missing bucket', 'missing code']) {
     let gets = 0;
@@ -90,7 +100,7 @@ test('CompleteMultipartUpload detects incorrect validation, state, response and 
         const { Bucket, Key, UploadId, MultipartUpload: { Parts } } = command.input;
         if (!service.buckets.has(Bucket)) {
           if (mode === 'missing bucket') return ok(200);
-          if (mode === 'missing code') throw error('NoSuchUpload');
+          if (mode === 'missing code') throw error('NoSuchKey');
           return next();
         }
         if (Parts.length === 2 && Parts[0].PartNumber === 3) {
@@ -221,7 +231,10 @@ async function completeAgainst(t, responses, maxAttempts = 1) {
   });
   t.after(() => client.destroy());
   const command = new CompleteMultipartUploadCommand({ Bucket: 'bucket', Key: 'key', UploadId: 'upload', MultipartUpload: { Parts: [{ PartNumber: 1, ETag: '"etag"' }] } });
-  return { action: () => assertS3Error(client, command, 400, 'EntityTooSmall', 'CompleteMultipartUpload'), requests: () => requests };
+  return {
+    action: (status = 400, code = 'EntityTooSmall') => assertS3Error(client, command, status, code, 'CompleteMultipartUpload'),
+    requests: () => requests,
+  };
 }
 const errorXml = code => `<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>${code}</Code><Message>failed</Message><RequestId>request</RequestId></Error>`;
 const successXml = '<?xml version="1.0" encoding="UTF-8"?>\n<CompleteMultipartUploadResult><Bucket>bucket</Bucket><Key>key</Key><ETag>"etag-1"</ETag></CompleteMultipartUploadResult>';
@@ -232,6 +245,14 @@ test('S3 error assertions accept errors embedded in HTTP 200 responses', async t
 
 test('S3 error assertions accept ordinary errors with the expected status', async t => {
   await (await completeAgainst(t, [[400, errorXml('EntityTooSmall')]])).action();
+});
+
+test('S3 error assertions accept any listed alternative code and reject others', async t => {
+  for (const code of MISSING_BUCKET_UPLOAD_CODES) {
+    await (await completeAgainst(t, [[404, errorXml(code)]])).action(404, MISSING_BUCKET_UPLOAD_CODES);
+  }
+  await assert.rejects((await completeAgainst(t, [[404, errorXml('NoSuchKey')]])).action(404, MISSING_BUCKET_UPLOAD_CODES), /expected one of NoSuchBucket, NoSuchUpload, got NoSuchKey/);
+  await assert.rejects((await completeAgainst(t, [[400, errorXml('NoSuchUpload')]])).action(404, MISSING_BUCKET_UPLOAD_CODES), /HTTP 404/);
 });
 
 test('S3 error assertions accept an embedded error after a retry', async t => {
