@@ -37,8 +37,8 @@ All are recorded in design.md. Nothing here is open.
 - [x] Path-style router. It splits the path into bucket, key and query. It selects the operation from method and subresource (`?uploads`, `?uploadId=`, `?cors`, `?encryption`, `?location`, `?list-type=2`).
 - [x] Unsupported subresources and out-of-scope operations (`?tagging`, `?acl`, `?policy`, `?versioning`, and so on) return `NotImplemented` (501). They never fall through to an object operation.
 - [x] XML writer for success bodies and for errors (`Code`, `Message`, `Resource`, `RequestId`). Set the `x-amz-request-id` header to the same value.
-- [ ] SQLite in WAL mode, with `synchronous=FULL` for commits and `PRAGMA foreign_keys=ON` on every connection. Create the four tables in the design (`buckets`, `objects`, `uploads`, `parts`) if missing. `uploads.bucket` is `ON DELETE CASCADE` (D1).
-- [ ] Startup: create `blobs/` and `staging/`. Delete every file in `staging/`, and every file in `blobs/` that no row refers to.
+- [x] SQLite in WAL mode, with `synchronous=FULL` for commits and `PRAGMA foreign_keys=ON` on every connection. Create the four tables in the design (`buckets`, `objects`, `uploads`, `parts`) if missing. `uploads.bucket` is `ON DELETE CASCADE` (D1). (`lib/db.cpp` wraps the C API; `lib/store.cpp` configures the connection and creates the schema, plus an `uploads(bucket, key)` index for ListMultipartUploads. Tests in `test/store_test.cpp`.)
+- [x] Startup: create `blobs/` and `staging/`. Delete every file in `staging/`, and every file in `blobs/` that no row refers to. (`Store`'s constructor, called from `main` before the server starts. It logs what it removed.)
 - [ ] SigV4 header authentication, as design.md's "Authentication" section describes: canonical request, string to sign, derived signing key, constant-time comparison, and the access key ID check. Use AWS's published test vectors.
 - [ ] Payload hash check: `x-amz-content-sha256` against the SHA-256 of the streamed body. A mismatch returns `XAmzContentSHA256Mismatch` (400) and deletes the staging file.
 - [ ] Preflight OPTIONS is accepted without a signature. Its full handling is in Phase 10.

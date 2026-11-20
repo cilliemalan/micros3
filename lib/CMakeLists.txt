@@ -1,10 +1,12 @@
 add_library(libmicros3 STATIC
     config.cpp
+    db.cpp
     digest.cpp
     http.cpp
     router.cpp
     server.cpp
     service.cpp
+    store.cpp
     url.cpp
     xml.cpp
 )

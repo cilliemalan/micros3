@@ -4,6 +4,7 @@ add_executable(testmicros3
     deps_test.cpp
     router_test.cpp
     server_test.cpp
+    store_test.cpp
     xml_test.cpp
 )
 target_link_libraries(testmicros3 PRIVATE libmicros3 GTest::gtest_main)

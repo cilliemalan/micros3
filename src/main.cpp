@@ -2,6 +2,10 @@
 
 #include "micros3/server.h"
 #include "micros3/service.h"
+#include "micros3/store.h"
+
+#include <exception>
+#include <memory>
 
 #include <iostream>
 #include <string>
@@ -21,6 +25,19 @@ int main(int argc, char **argv) {
         return 2;
     }
     const config::Config cfg = std::get<config::Config>(parsed);
+
+    std::unique_ptr<micros3::Store> store;
+    try {
+        store = std::make_unique<micros3::Store>(cfg.data_dir);
+    } catch (const std::exception &e) {
+        std::cerr << program << ": cannot open data directory " << cfg.data_dir << ": " << e.what() << std::endl;
+        return 1;
+    }
+    const micros3::StartupScan &scan = store->startup_scan();
+    if (scan.staging_removed != 0 || scan.orphan_blobs_removed != 0) {
+        std::cout << "Startup scan removed " << scan.staging_removed << " staging file(s) and "
+                  << scan.orphan_blobs_removed << " unreferenced blob(s)" << std::endl;
+    }
 
     micros3::S3Service service;
     micros3::Server server(service);
