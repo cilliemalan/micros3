@@ -6,7 +6,7 @@ Floci instance to validate the verifier, using the endpoint, credentials, and
 region supplied by `../floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket,
-object listing, PutObject, GetObject, HeadObject, DeleteObject, CORS configuration,
+object listing, PutObject, GetObject, HeadObject, DeleteObject, DeleteObjects, CORS configuration,
 and encryption checks are implemented; the other operation checks remain failing stubs.
 
 ## Setup and cleanup
@@ -38,7 +38,8 @@ and encryption checks are implemented; the other operation checks remain failing
 - [ ] **CopyObject**: copy an object and verify the copy's content and metadata.
 - [x] **DeleteObject**: verify deletion, idempotence, exact-key isolation, empty
       objects, recreation after deletion, and missing buckets.
-- [ ] **DeleteObjects**: delete multiple objects and verify the results.
+- [x] **DeleteObjects**: verify verbose and quiet results, missing and repeated
+      deletions, exact-key and bucket isolation, the 1,000-key limit, and a missing bucket.
 
 ## Listing operations
 

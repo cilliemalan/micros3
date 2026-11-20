@@ -19,6 +19,10 @@ overwrites, ranges, ETag conditions, and missing keys and buckets. The SDK
 exposes no response body for HEAD; the check does not inspect the wire for an
 improperly sent body. DeleteObject checks binary and empty objects, exact-key
 isolation, missing and repeated deletions, recreation, and missing buckets.
+DeleteObjects checks verbose and quiet responses, deletion of existing, empty
+and absent keys, repeat deletion, recreation, exact-key and bucket isolation,
+the 1,000-key limit, and a missing bucket. It does not exercise per-key errors
+requiring permissions or versioned deletions (versioning is outside scope).
 CORS configuration checks cover multiple ordered rules and their
 fields, replacement, bucket isolation, the 100-rule limit, invalid inputs, and
 missing configurations and buckets. Encryption checks verify the SSE-S3 default
@@ -53,8 +57,9 @@ environment file.
 `pnpm start` is an alias for the verifier and accepts the same options. Without
 a custom endpoint, the AWS SDK uses its default AWS S3 endpoint and credentials,
 so ensure the intended endpoint and credentials are configured before running.
-The bucket, PutObject, GetObject, HeadObject, DeleteObject, listing, CORS and encryption checks create uniquely named buckets
-and temporary objects or CORS configurations. They attempt cleanup even after failures;
+The bucket, PutObject, GetObject, HeadObject, DeleteObject, DeleteObjects,
+listing, CORS and encryption checks create uniquely named buckets and temporary
+objects or CORS configurations. They attempt cleanup even after failures;
 cleanup errors identify the affected resources, which may need manual removal.
 A rejected creation is not cleaned up when the response could indicate a bucket
 owned by someone else; after an ambiguous SDK retry, manually inspect the named
@@ -62,14 +67,16 @@ bucket. The repeat-creation and
 non-empty deletion checks also require PutObject, GetObject and DeleteObject
 support. The HeadObject and object listing checks require PutObject and DeleteObject support.
 The PutObject and GetObject checks require both operations and DeleteObject for cleanup.
-The DeleteObject check requires PutObject and GetObject support, including metadata.
+The DeleteObject and DeleteObjects checks require PutObject and GetObject
+support, including metadata; DeleteObjects also uses DeleteObject for cleanup.
 The bucket listing check follows up to 1,000 pages when looking for its two test
 buckets.
 
-The configured Floci instance currently accepts invalid bucket names and invalid
-CORS configurations, so those checks fail against it. They are retained to
-verify S3's validation rules. The CORS checks verify configuration APIs; they do
-not test HTTP preflight or response headers.
+The configured Floci instance currently accepts invalid bucket names, invalid
+CORS configurations and DeleteObjects requests with more than 1,000 keys, so
+those checks fail against it. They are retained to verify S3's validation rules.
+The CORS checks verify configuration APIs; they do not test HTTP preflight or
+response headers.
 
 ## Implementing checks
 
@@ -80,6 +87,7 @@ continues after failures, so each implemented test should manage its own setup,
 use isolated resource names, and clean up resources in `finally` even if an
 assertion fails. Add new sections to the suite list in `index.js`.
 
-Run `pnpm test:unit` to test the runner, startup behavior, bucket, PutObject, GetObject, HeadObject, DeleteObject, listing, CORS
-and encryption checks offline using mock services. This does not run the S3
+Run `pnpm test:unit` to test the runner, startup behavior, bucket, PutObject,
+GetObject, HeadObject, DeleteObject, DeleteObjects, listing, CORS and encryption
+checks offline using mock services. This does not run the S3
 operation checks against a real endpoint.

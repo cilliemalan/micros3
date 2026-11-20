@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { DeleteBucketCommand, DeleteObjectCommand, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { assertStatus, ignoreMissing, message, status, withBucket, withCleanup } from './resources.js';
 import { verifyDeleteObject } from './delete-object.js';
+import { verifyDeleteObjects } from './delete-objects.js';
 import { verifyGetObject, verifyPutObject } from './put-get-object.js';
 
 async function verifyHeadObject(client) {
@@ -110,5 +111,5 @@ export default [
   { name: 'HeadObject', run: ({ client }) => verifyHeadObject(client) },
   { name: 'CopyObject', run() { throw new Error('Not implemented'); } },
   { name: 'DeleteObject', run: ({ client }) => verifyDeleteObject(client) },
-  { name: 'DeleteObjects', run() { throw new Error('Not implemented'); } },
+  { name: 'DeleteObjects', run: ({ client }) => verifyDeleteObjects(client) },
 ];
