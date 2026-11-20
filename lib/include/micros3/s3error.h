@@ -35,6 +35,20 @@ inline S3Error max_message_length_exceeded() {
 
 inline S3Error no_such_bucket() { return {404, "NoSuchBucket", "The specified bucket does not exist"}; }
 
+inline S3Error no_such_key() { return {404, "NoSuchKey", "The specified key does not exist."}; }
+
+inline S3Error invalid_digest() { return {400, "InvalidDigest", "The Content-MD5 you specified was invalid."}; }
+
+inline S3Error bad_digest(std::string message = "The Content-MD5 you specified did not match what we received.") {
+    return {400, "BadDigest", std::move(message)};
+}
+
+inline S3Error precondition_failed() {
+    return {412, "PreconditionFailed", "At least one of the pre-conditions you specified did not hold"};
+}
+
+inline S3Error invalid_range() { return {416, "InvalidRange", "The requested range is not satisfiable"}; }
+
 inline S3Error internal_error() { return {500, "InternalError", "We encountered an internal error. Please try again."}; }
 
 } // namespace micros3

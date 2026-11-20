@@ -34,10 +34,34 @@ struct Request {
     std::optional<std::string_view> header(std::string_view name) const;
 };
 
+// A body read from an open file: `length` bytes from `offset`. The file
+// descriptor is closed when the last reference goes away. Because the file
+// is open, it can still be read after it is unlinked (an overwritten object).
+class FileBody {
+public:
+    FileBody(int fd, std::uint64_t offset, std::uint64_t length) : fd_(fd), offset_(offset), length_(length) {}
+    ~FileBody();
+    FileBody(const FileBody &) = delete;
+    FileBody &operator=(const FileBody &) = delete;
+
+    std::uint64_t length() const { return length_; }
+    // Reads up to `size` bytes at `position` (0 = the start of the body) into
+    // `buffer`. Returns the count read, which is short only at the end.
+    // Throws std::system_error on a read error.
+    std::size_t read(std::uint64_t position, char *buffer, std::size_t size) const;
+
+private:
+    int fd_;
+    std::uint64_t offset_;
+    std::uint64_t length_;
+};
+
 struct Response {
     int status = 200;
     Headers headers;
     std::string body;
+    // When set, the body is streamed from this file instead of `body`.
+    std::shared_ptr<FileBody> file;
     // For a response sent without a body (HEAD), the Content-Length to report.
     std::optional<std::uint64_t> reported_length;
 

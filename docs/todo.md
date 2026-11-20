@@ -60,21 +60,21 @@ All are recorded in design.md. Nothing here is open.
 
 ## Phase 3: Objects
 
-- [ ] Streamed PutObject: write the body to `staging/` while computing MD5, and the CRC32 and SHA-256 checksums when they are requested. Do not buffer the whole body.
-- [ ] `Content-MD5`: a malformed value returns `InvalidDigest` (400). A mismatch returns `BadDigest` (400) and deletes the staging file.
-- [ ] `x-amz-checksum-crc32` and `x-amz-checksum-sha256`: mismatch returns `BadDigest`. Match `integrity.js` for malformed values.
-- [ ] Commit: `fsync` the staging file, `rename` it into `blobs/`, then in one transaction upsert the `objects` row. Delete the replaced blob after the commit.
-- [ ] Store the metadata headers as JSON: `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`, and `x-amz-meta-*`. Return them on GET and HEAD.
-- [ ] Every PutObject, GetObject and HeadObject response carries `x-amz-server-side-encryption: AES256` (answered yes in design.md).
-- [ ] ETag: quoted hex MD5 of the body. Empty and binary bodies work.
-- [ ] Keys are stored as raw UTF-8 BLOB bytes. The request path is URL-decoded before storage.
-- [ ] GetObject: streams the blob file. Missing key returns `NoSuchKey` (404). Missing bucket returns `NoSuchBucket`.
-- [ ] Range (D6): one range, `bytes=a-b`, `bytes=a-` or `bytes=-n`. A satisfiable range returns 206 with `Content-Range` and only those bytes. An unsatisfiable one returns 416 `InvalidRange`. A header with several ranges is ignored, and the whole object is returned with 200. Apply Range after the conditions (Phase 9). Do the same on HeadObject, with no body.
-- [ ] HeadObject: no body. `Content-Length` is the object size. Missing key returns 404 with no body.
-- [ ] DeleteObject: 204. Match `delete-object.js` for a missing key.
-- [ ] Use the design's order for failures: a failed upload leaves no visible object, and the staging file is removed.
+- [x] Streamed PutObject: write the body to `staging/` while computing MD5, and the CRC32 and SHA-256 checksums when they are requested. Do not buffer the whole body. (`PutObjectExchange` in `lib/object_handlers.cpp` writes each chunk to an `objects::StagedBlob` (`lib/objects.cpp`). Other checksum algorithms (CRC32C, CRC64NVME, SHA-1) and SSE other than AES256 answer 501. Keys over 1,024 bytes are `KeyTooLongError` and user metadata over 2 KiB is `MetadataTooLarge`.)
+- [x] `Content-MD5`: a malformed value returns `InvalidDigest` (400). A mismatch returns `BadDigest` (400) and deletes the staging file.
+- [x] `x-amz-checksum-crc32` and `x-amz-checksum-sha256`: mismatch returns `BadDigest`. Match `integrity.js` for malformed values. (`integrity.js` sends none; a value that is not base64 of the right length is `InvalidRequest` (400), as S3 answers. A valid checksum is echoed in the PutObject response.)
+- [x] Commit: `fsync` the staging file, `rename` it into `blobs/`, then in one transaction upsert the `objects` row. Delete the replaced blob after the commit. (The `blobs/` directory is fsynced after the rename too.)
+- [x] Store the metadata headers as JSON: `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`, and `x-amz-meta-*`. Return them on GET and HEAD. (Content-Type defaults to `binary/octet-stream`. GetObject also honors the `response-*` override parameters.)
+- [x] Every PutObject, GetObject and HeadObject response carries `x-amz-server-side-encryption: AES256` (answered yes in design.md).
+- [x] ETag: quoted hex MD5 of the body. Empty and binary bodies work.
+- [x] Keys are stored as raw UTF-8 BLOB bytes. The request path is URL-decoded before storage.
+- [x] GetObject: streams the blob file. Missing key returns `NoSuchKey` (404). Missing bucket returns `NoSuchBucket`. (`http::Response::file` holds the open file, and `lib/server.cpp` streams it with `tryEnd` and `onWritable`, so backpressure is respected. An overwrite or delete during a download unlinks a file that stays readable.)
+- [x] Range (D6): one range, `bytes=a-b`, `bytes=a-` or `bytes=-n`. A satisfiable range returns 206 with `Content-Range` and only those bytes. An unsatisfiable one returns 416 `InvalidRange`. A header with several ranges is ignored, and the whole object is returned with 200. Apply Range after the conditions (Phase 9). Do the same on HeadObject, with no body. (`conditions::parse_range` in `lib/conditions.cpp`. Any range on an empty object is 416. A 416 carries `Content-Range: bytes */<size>`.)
+- [x] HeadObject: no body. `Content-Length` is the object size. Missing key returns 404 with no body.
+- [x] DeleteObject: 204. Match `delete-object.js` for a missing key. (204 for a missing key too.)
+- [x] Use the design's order for failures: a failed upload leaves no visible object, and the staging file is removed.
 
-**Checks:** `put-get-object.js`, `object.js`, `delete-object.js`, `integrity.js`.
+**Checks:** `put-get-object.js`, `object.js`, `delete-object.js`, `integrity.js`. (On 2026-11-20, PutObject, GetObject, HeadObject, DeleteObject and both integrity upload checks passed. "Object ETags are MD5 digests" needs CopyObject from Phase 6.)
 
 ## Phase 4: Encryption
 
@@ -128,13 +128,13 @@ All are recorded in design.md. Nothing here is open.
 
 ## Phase 9: Conditional requests
 
-- [ ] Parse HTTP dates as IMF-fixdate. Future and unparseable dates are unspecified (design answer 5), so ignore them.
-- [ ] Evaluate in RFC 9110 section 13.2.2 order: `If-Match`, then `If-Unmodified-Since` (ignored when `If-Match` is present), then `If-None-Match`, then `If-Modified-Since` (ignored when `If-None-Match` is present). Range is applied after these (Phase 3).
-- [ ] Failed `If-None-Match` or `If-Modified-Since` on GET or HEAD returns 304. Failed `If-Match` or `If-Unmodified-Since` returns 412 `PreconditionFailed`.
-- [ ] Compare dates at one-second resolution, using the stored `Last-Modified`.
-- [ ] HEAD and 304 responses have no body on the wire, even on a raw socket.
+- [x] Parse HTTP dates as IMF-fixdate. Future and unparseable dates are unspecified (design answer 5), so ignore them. (`clock::parse_http_date`.)
+- [x] Evaluate in RFC 9110 section 13.2.2 order: `If-Match`, then `If-Unmodified-Since` (ignored when `If-Match` is present), then `If-None-Match`, then `If-Modified-Since` (ignored when `If-None-Match` is present). Range is applied after these (Phase 3). (`conditions::evaluate`, used by GetObject and HeadObject since Phase 3.)
+- [x] Failed `If-None-Match` or `If-Modified-Since` on GET or HEAD returns 304. Failed `If-Match` or `If-Unmodified-Since` returns 412 `PreconditionFailed`.
+- [x] Compare dates at one-second resolution, using the stored `Last-Modified`.
+- [x] HEAD and 304 responses have no body on the wire, even on a raw socket.
 - [ ] CopyObject: `x-amz-copy-source-if-*` headers. A failed condition returns 412 `PreconditionFailed`.
-- [ ] Conditional writes (D7): `If-None-Match` on PutObject or CompleteMultipartUpload returns 501 `NotImplemented`.
+- [ ] Conditional writes (D7): `If-None-Match` on PutObject or CompleteMultipartUpload returns 501 `NotImplemented`. (Done for PutObject, which also answers `If-Match` with 501. CompleteMultipartUpload remains, in Phase 8.)
 
 **Checks:** `conditional.js`, with `integrity.js` for the body rules.
 
@@ -157,11 +157,11 @@ All are recorded in design.md. Nothing here is open.
 
 ## Emulator tests
 
-- [ ] Replace `test/hello_test.cpp` with store tests: UTF-8 byte order for listings, continuation token encoding, single-part and multipart ETags, XML escaping, the BadDigest and InvalidDigest rules, bucket-name validation, and Range parsing and 206/416 results.
+- [ ] Replace `test/hello_test.cpp` with store tests: UTF-8 byte order for listings, continuation token encoding, single-part and multipart ETags, XML escaping, the BadDigest and InvalidDigest rules, bucket-name validation, and Range parsing and 206/416 results. (`hello_test.cpp` is gone. Single-part ETags, BadDigest and InvalidDigest, Range and 206/416 are in `test/server_test.cpp` and `test/conditions_test.cpp`; XML escaping and bucket names have their own tests. Listing order, continuation tokens and multipart ETags remain.)
 - [x] SigV4 signing against AWS's published test vectors (Phase 1). (The S3 GET, PUT, lifecycle and list examples, the derived-key example, and `get-vanilla`.)
 - [x] MD5, SHA-256, CRC32 and base64 results checked against known vectors, to confirm the wiring to the libraries. (`test/digest_test.cpp`, which also checks HMAC-SHA256 against RFC 4231.)
-- [ ] Persistence script (`test/persistence.sh`): create a bucket and an object, stop, restart on the same data directory, read the object back.
-- [ ] Crash-safety script (`test/crash.sh`): start a large PutObject with `curl --limit-rate` so it runs for a while, send SIGKILL mid-upload, restart. The object must be absent or complete, and `staging/` must be empty.
+- [x] Persistence script (`test/persistence.sh`): create a bucket and an object, stop, restart on the same data directory, read the object back. (`test/persistence.sh [binary]`, with helpers in `test/lib-server.sh`. Needs curl 7.75+.)
+- [x] Crash-safety script (`test/crash.sh`): start a large PutObject with `curl --limit-rate` so it runs for a while, send SIGKILL mid-upload, restart. The object must be absent or complete, and `staging/` must be empty. (`test/crash.sh [binary]` also kills an overwrite mid-upload and checks the old object survives and no orphan blob remains.)
 - [x] Static-link check: `file` and `ldd` on the release binary. (`test/static-check.sh [binary]`.)
 - [x] Docker check: the image has no shell, and it runs as `65532:65532`. (`test/docker-check.sh [image]`, which also sends a signed request with `curl --aws-sigv4` and confirms the container keeps running with `/data` writable.)
 

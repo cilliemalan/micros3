@@ -19,6 +19,12 @@ to start the server at
 `http://localhost:3923/` (options: `--data-dir <path>` or `MICROS3_DATA_DIR`,
 default `./data`; `--port <n>` or `MICROS3_PORT`, default 3923; credentials
 from `MICROS3_ACCESS_KEY_ID` and `MICROS3_SECRET_ACCESS_KEY`, default
-`test`/`test`). S3 operations are not implemented yet. On Windows, append `.exe` to the executable names.
-The initial server uses plain HTTP, without TLS or WebSocket compression.
+`test`/`test`). Bucket operations and PutObject, GetObject, HeadObject and
+DeleteObject are implemented; see [lib/README.md](lib/README.md). On Windows,
+append `.exe` to the executable names. The server uses plain HTTP, without TLS or
+WebSocket compression.
+
+`test/persistence.sh` and `test/crash.sh` start the built server on a
+temporary data directory to check that objects survive a restart and that a
+killed upload leaves nothing partial behind (they need curl 7.75 or newer).
 

@@ -41,6 +41,10 @@ std::unique_ptr<http::Exchange> begin(Store &store, const http::Request &request
     case Operation::HeadBucket: return ignoring_body(&head_bucket);
     case Operation::GetBucketLocation: return ignoring_body(&get_bucket_location);
     case Operation::DeleteBucket: return ignoring_body(&delete_bucket);
+    case Operation::PutObject: return put_object(store, request, route);
+    case Operation::GetObject: return ignoring_body(&get_object);
+    case Operation::HeadObject: return ignoring_body(&head_object);
+    case Operation::DeleteObject: return ignoring_body(&delete_object);
     default: return nullptr;
     }
 }

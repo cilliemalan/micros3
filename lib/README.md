@@ -11,10 +11,10 @@ It is meant to implement these operations with basic support:
   - [x] DeleteBucket
   - [x] GetBucketLocation
 - Objects:
-  - [ ] PutObject
-  - [ ] GetObject
-  - [ ] HeadObject
-  - [ ] DeleteObject
+  - [x] PutObject
+  - [x] GetObject
+  - [x] HeadObject
+  - [x] DeleteObject
   - [ ] DeleteObjects
   - [ ] CopyObject
 - Listing:

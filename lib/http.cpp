@@ -3,7 +3,11 @@
 #include "micros3/url.h"
 #include "micros3/xml.h"
 
+#include <unistd.h>
+
+#include <cerrno>
 #include <random>
+#include <system_error>
 
 namespace micros3::http {
 
@@ -22,6 +26,26 @@ void Response::set_header(std::string name, std::string value) {
         }
     }
     headers.emplace_back(std::move(name), std::move(value));
+}
+
+FileBody::~FileBody() {
+    if (fd_ >= 0) ::close(fd_);
+}
+
+std::size_t FileBody::read(std::uint64_t position, char *buffer, std::size_t size) const {
+    if (position >= length_) return 0;
+    if (size > length_ - position) size = static_cast<std::size_t>(length_ - position);
+    std::size_t done = 0;
+    while (done < size) {
+        const ssize_t n = ::pread(fd_, buffer + done, size - done, static_cast<off_t>(offset_ + position + done));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            throw std::system_error(errno, std::generic_category(), "read object file");
+        }
+        if (n == 0) break;
+        done += static_cast<std::size_t>(n);
+    }
+    return done;
 }
 
 bool bodyless(std::string_view method, int status) {

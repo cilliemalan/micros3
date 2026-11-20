@@ -16,7 +16,10 @@
 #include <future>
 #include <memory>
 #include <optional>
+#include <filesystem>
+#include <random>
 #include <regex>
+#include <tuple>
 #include <string>
 #include <thread>
 
@@ -214,7 +217,8 @@ struct TestService {
 // A raw HTTP/1.1 request, signed with `credentials` when they are given.
 std::string s3_request(const std::string &method, const std::string &target, const std::string &body = "",
                        const std::optional<micros3::sigv4::Credentials> &credentials = kCredentials,
-                       std::optional<std::string> payload_hash = std::nullopt) {
+                       std::optional<std::string> payload_hash = std::nullopt,
+                       const micros3::http::Headers &extra = {}) {
     micros3::http::Request request;
     request.method = method;
     const std::size_t question = target.find('?');
@@ -224,10 +228,14 @@ std::string s3_request(const std::string &method, const std::string &target, con
                        {"x-amz-date", "20261120T101500Z"},
                        {"x-amz-content-sha256",
                         payload_hash.value_or(micros3::digest::hex(micros3::digest::sha256(body)))}};
+    std::vector<std::string> signed_headers = {"host", "x-amz-content-sha256", "x-amz-date"};
+    for (const auto &[name, value] : extra) {
+        request.headers.emplace_back(name, value);
+        signed_headers.push_back(name);
+    }
     if (credentials) {
         request.headers.emplace_back(
-            "authorization", micros3::sigv4::authorization_header(request, *credentials, "us-east-1",
-                                                                  {"host", "x-amz-content-sha256", "x-amz-date"}));
+            "authorization", micros3::sigv4::authorization_header(request, *credentials, "us-east-1", signed_headers));
     }
     std::string text = method + " " + target + " HTTP/1.1\r\n";
     for (const auto &[name, value] : request.headers) text += name + ": " + value + "\r\n";
@@ -473,4 +481,248 @@ TEST(Buckets, ListPaginatesWithContinuationToken) {
     const std::string response = exchange(server.port(), s3_request("GET", "/?max-buckets=0"));
     EXPECT_TRUE(status_is(response, "400")) << response;
     EXPECT_TRUE(has(body_of(response), "<Code>InvalidArgument</Code>")) << response;
+}
+
+// Object operations, end to end over HTTP.
+
+namespace {
+
+std::string md5_base64(const std::string &body) {
+    return micros3::digest::base64_encode(micros3::digest::md5(body));
+}
+
+std::string quoted_md5(const std::string &body) {
+    return "\"" + micros3::digest::hex(micros3::digest::md5(body)) + "\"";
+}
+
+// A TestService with a running server and a bucket called `objects`.
+struct ObjectServer {
+    TestService s3;
+    RunningServer server{s3.service};
+    ObjectServer() { EXPECT_TRUE(status_is(send("PUT", "/objects"), "200")); }
+
+    std::string send(const std::string &method, const std::string &target, const std::string &body = "",
+                     const micros3::http::Headers &extra = {}) {
+        return exchange(server.port(), s3_request(method, target, body, kCredentials, std::nullopt, extra));
+    }
+};
+
+} // namespace
+
+TEST(ObjectApi, PutGetHeadDelete) {
+    ObjectServer s;
+    const std::string body("\0\1\x7F\x80\xFE\xFF", 6);
+    std::string response = s.send("PUT", "/objects/nested/%E9%9B%AA%20%2B%26%25.bin", body,
+                                  {{"content-type", "application/octet-stream"},
+                                   {"cache-control", "max-age=123"},
+                                   {"x-amz-meta-purpose", "test"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "ETag"), quoted_md5(body));
+    EXPECT_EQ(header_value(response, "x-amz-server-side-encryption"), "AES256");
+
+    response = s.send("GET", "/objects/nested/%E9%9B%AA%20%2B%26%25.bin");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(body_of(response), body);
+    EXPECT_EQ(header_value(response, "Content-Length"), "6");
+    EXPECT_EQ(header_value(response, "ETag"), quoted_md5(body));
+    EXPECT_EQ(header_value(response, "Content-Type"), "application/octet-stream");
+    EXPECT_EQ(header_value(response, "Cache-Control"), "max-age=123");
+    EXPECT_EQ(header_value(response, "x-amz-meta-purpose"), "test");
+    EXPECT_EQ(header_value(response, "x-amz-server-side-encryption"), "AES256");
+    EXPECT_TRUE(std::regex_match(header_value(response, "Last-Modified"),
+                                 std::regex("\\w{3}, \\d\\d \\w{3} \\d{4} \\d\\d:\\d\\d:\\d\\d GMT")));
+
+    response = s.send("HEAD", "/objects/nested/%E9%9B%AA%20%2B%26%25.bin");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "Content-Length"), "6");
+    EXPECT_EQ(body_of(response), "");
+
+    // An overwrite replaces the content and the metadata, and the old blob.
+    response = s.send("PUT", "/objects/nested/%E9%9B%AA%20%2B%26%25.bin", "new", {{"x-amz-meta-other", "x"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    response = s.send("GET", "/objects/nested/%E9%9B%AA%20%2B%26%25.bin");
+    EXPECT_EQ(body_of(response), "new");
+    EXPECT_EQ(header_value(response, "Content-Type"), "binary/octet-stream");
+    EXPECT_EQ(header_value(response, "Cache-Control"), "<missing>");
+    EXPECT_EQ(header_value(response, "x-amz-meta-purpose"), "<missing>");
+    EXPECT_EQ(header_value(response, "x-amz-meta-other"), "x");
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(s.s3.store.blobs_dir()), {}), 1);
+
+    response = s.send("DELETE", "/objects/nested/%E9%9B%AA%20%2B%26%25.bin");
+    EXPECT_TRUE(status_is(response, "204")) << response;
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.blobs_dir()));
+    response = s.send("GET", "/objects/nested/%E9%9B%AA%20%2B%26%25.bin");
+    EXPECT_TRUE(status_is(response, "404")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>NoSuchKey</Code>")) << response;
+    response = s.send("HEAD", "/objects/nested/%E9%9B%AA%20%2B%26%25.bin");
+    EXPECT_TRUE(status_is(response, "404")) << response;
+    EXPECT_EQ(body_of(response), "");
+    // Deleting a missing key succeeds.
+    EXPECT_TRUE(status_is(s.send("DELETE", "/objects/nested/%E9%9B%AA%20%2B%26%25.bin"), "204"));
+}
+
+TEST(ObjectApi, EmptyObject) {
+    ObjectServer s;
+    std::string response = s.send("PUT", "/objects/empty", "");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "ETag"), "\"d41d8cd98f00b204e9800998ecf8427e\"");
+    response = s.send("GET", "/objects/empty");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "Content-Length"), "0");
+    EXPECT_EQ(body_of(response), "");
+    response = s.send("HEAD", "/objects/empty");
+    EXPECT_EQ(header_value(response, "Content-Length"), "0");
+}
+
+TEST(ObjectApi, MissingBucket) {
+    ObjectServer s;
+    for (const auto &[method, target] : std::vector<std::pair<std::string, std::string>>{
+             {"PUT", "/missing/k"}, {"GET", "/missing/k"}, {"DELETE", "/missing/k"}}) {
+        const std::string response = s.send(method, target, method == "PUT" ? "data" : "");
+        EXPECT_TRUE(status_is(response, "404")) << response;
+        EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << response;
+    }
+    EXPECT_TRUE(status_is(s.send("HEAD", "/missing/k"), "404"));
+}
+
+TEST(ObjectApi, ContentMd5) {
+    ObjectServer s;
+    std::string response = s.send("PUT", "/objects/k", "body", {{"content-md5", md5_base64("body")}});
+    EXPECT_TRUE(status_is(response, "200")) << response;
+
+    response = s.send("PUT", "/objects/k", "changed", {{"content-md5", md5_base64("other")}});
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>BadDigest</Code>")) << response;
+
+    response = s.send("PUT", "/objects/k", "changed", {{"content-md5", "bm90LWEtZGlnZXN0"}});
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>InvalidDigest</Code>")) << response;
+
+    // Neither rejected upload changed the object or left a file behind.
+    EXPECT_EQ(body_of(s.send("GET", "/objects/k")), "body");
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.staging_dir()));
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(s.s3.store.blobs_dir()), {}), 1);
+}
+
+TEST(ObjectApi, Checksums) {
+    ObjectServer s;
+    const std::string body = "checksum content";
+    const auto crc = [](const std::string &text) {
+        const std::uint32_t value = micros3::digest::crc32(text);
+        const unsigned char bytes[4] = {static_cast<unsigned char>(value >> 24), static_cast<unsigned char>(value >> 16),
+                                        static_cast<unsigned char>(value >> 8), static_cast<unsigned char>(value)};
+        return micros3::digest::base64_encode(bytes, 4);
+    };
+    const auto sha = [](const std::string &text) {
+        return micros3::digest::base64_encode(micros3::digest::sha256(text));
+    };
+
+    std::string response = s.send("PUT", "/objects/crc", body, {{"x-amz-checksum-crc32", crc(body)}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "x-amz-checksum-crc32"), crc(body));
+    response = s.send("PUT", "/objects/sha", body, {{"x-amz-checksum-sha256", sha(body)}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "x-amz-checksum-sha256"), sha(body));
+
+    response = s.send("PUT", "/objects/bad-crc", body, {{"x-amz-checksum-crc32", crc("other")}});
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>BadDigest</Code>")) << response;
+    response = s.send("PUT", "/objects/sha", "replacement", {{"x-amz-checksum-sha256", sha("other")}});
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>BadDigest</Code>")) << response;
+    response = s.send("PUT", "/objects/bad-crc", body, {{"x-amz-checksum-crc32", "AAAA"}});
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>InvalidRequest</Code>")) << response;
+
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/bad-crc"), "404"));
+    EXPECT_EQ(body_of(s.send("GET", "/objects/sha")), body);
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.staging_dir()));
+}
+
+TEST(ObjectApi, PayloadHashMismatchStoresNothing) {
+    ObjectServer s;
+    const std::string hash = micros3::digest::hex(micros3::digest::sha256("original body"));
+    const std::string response =
+        exchange(s.server.port(), s3_request("PUT", "/objects/k", "altered body!", kCredentials, hash));
+    EXPECT_TRUE(has(body_of(response), "<Code>XAmzContentSHA256Mismatch</Code>")) << response;
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/k"), "404"));
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.staging_dir()));
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.blobs_dir()));
+}
+
+TEST(ObjectApi, Ranges) {
+    ObjectServer s;
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/r", "0123456"), "200"));
+    for (const auto &[range, content, content_range] : std::vector<std::tuple<std::string, std::string, std::string>>{
+             {"bytes=1-3", "123", "bytes 1-3/7"}, {"bytes=4-", "456", "bytes 4-6/7"}, {"bytes=-2", "56", "bytes 5-6/7"}}) {
+        std::string response = s.send("GET", "/objects/r", "", {{"range", range}});
+        EXPECT_TRUE(status_is(response, "206")) << response;
+        EXPECT_EQ(body_of(response), content) << range;
+        EXPECT_EQ(header_value(response, "Content-Range"), content_range);
+        response = s.send("HEAD", "/objects/r", "", {{"range", range}});
+        EXPECT_TRUE(status_is(response, "206")) << response;
+        EXPECT_EQ(header_value(response, "Content-Length"), std::to_string(content.size()));
+        EXPECT_EQ(body_of(response), "");
+    }
+    std::string response = s.send("GET", "/objects/r", "", {{"range", "bytes=100-200"}});
+    EXPECT_TRUE(status_is(response, "416")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>InvalidRange</Code>")) << response;
+    EXPECT_EQ(header_value(response, "Content-Range"), "bytes */7");
+    EXPECT_TRUE(status_is(s.send("HEAD", "/objects/r", "", {{"range", "bytes=100-200"}}), "416"));
+
+    // Several ranges are ignored.
+    response = s.send("GET", "/objects/r", "", {{"range", "bytes=0-1,3-4"}});
+    EXPECT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(body_of(response), "0123456");
+}
+
+TEST(ObjectApi, Conditions) {
+    ObjectServer s;
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/c", "content"), "200"));
+    const std::string etag = quoted_md5("content");
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/c", "", {{"if-match", etag}}), "200"));
+    std::string response = s.send("GET", "/objects/c", "", {{"if-match", "\"other\""}});
+    EXPECT_TRUE(status_is(response, "412")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>PreconditionFailed</Code>")) << response;
+    response = s.send("GET", "/objects/c", "", {{"if-none-match", etag}});
+    EXPECT_TRUE(status_is(response, "304")) << response;
+    EXPECT_EQ(body_of(response), "");
+    EXPECT_EQ(header_value(response, "ETag"), etag);
+    EXPECT_TRUE(status_is(s.send("HEAD", "/objects/c", "", {{"if-none-match", etag}}), "304"));
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/c", "", {{"if-modified-since", "Thu, 01 Jan 1970 00:00:00 GMT"}}),
+                          "200"));
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/c", "", {{"if-unmodified-since", "Thu, 01 Jan 1970 00:00:00 GMT"}}),
+                          "412"));
+}
+
+TEST(ObjectApi, ConditionalWriteIsNotImplemented) {
+    ObjectServer s;
+    const std::string response = s.send("PUT", "/objects/c", "content", {{"if-none-match", "*"}});
+    EXPECT_TRUE(status_is(response, "501")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>NotImplemented</Code>")) << response;
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/c"), "404"));
+}
+
+TEST(ObjectApi, KeyTooLong) {
+    ObjectServer s;
+    const std::string response = s.send("PUT", "/objects/" + std::string(1025, 'k'), "x");
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>KeyTooLongError</Code>")) << response;
+}
+
+TEST(ObjectApi, LargeObjectStreamsBothWays) {
+    ObjectServer s;
+    std::string body(24 * 1024 * 1024, '\0');
+    std::mt19937 engine(42);
+    for (char &c : body) c = static_cast<char>(engine());
+    std::string response = s.send("PUT", "/objects/large", body);
+    ASSERT_TRUE(status_is(response, "200")) << head_of(response);
+    EXPECT_EQ(header_value(response, "ETag"), quoted_md5(body));
+    response = s.send("GET", "/objects/large");
+    ASSERT_TRUE(status_is(response, "200")) << head_of(response);
+    EXPECT_EQ(header_value(response, "Content-Length"), std::to_string(body.size()));
+    EXPECT_TRUE(body_of(response) == body);
+    response = s.send("GET", "/objects/large", "", {{"range", "bytes=1000000-"}});
+    EXPECT_TRUE(status_is(response, "206")) << head_of(response);
+    EXPECT_TRUE(body_of(response) == body.substr(1000000));
 }
