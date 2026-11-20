@@ -11,7 +11,10 @@ checks cover bucket creation, listing, existence, location and deletion,
 including invalid names, repeat creation, missing buckets and non-empty buckets.
 Both object-listing APIs are checked for ordered keys and metadata, empty and
 missing buckets, prefixes, delimiters, and pagination (including rolled-up
-prefixes). CORS configuration checks cover multiple ordered rules and their
+prefixes). HeadObject checks binary and empty objects, metadata and headers,
+overwrites, ranges, ETag conditions, and missing keys and buckets. The SDK
+exposes no response body for HEAD; the check does not inspect the wire for an
+improperly sent body. CORS configuration checks cover multiple ordered rules and their
 fields, replacement, bucket isolation, the 100-rule limit, invalid inputs, and
 missing configurations and buckets. Encryption checks verify the SSE-S3 default
 configuration on a newly created bucket and the missing-bucket error. Changing
@@ -45,14 +48,14 @@ environment file.
 `pnpm start` is an alias for the verifier and accepts the same options. Without
 a custom endpoint, the AWS SDK uses its default AWS S3 endpoint and credentials,
 so ensure the intended endpoint and credentials are configured before running.
-The bucket, listing, CORS and encryption checks create uniquely named buckets
+The bucket, HeadObject, listing, CORS and encryption checks create uniquely named buckets
 and temporary objects or CORS configurations. They attempt cleanup even after failures;
 cleanup errors identify the affected resources, which may need manual removal.
 A rejected creation is not cleaned up when the response could indicate a bucket
 owned by someone else; after an ambiguous SDK retry, manually inspect the named
 bucket. The repeat-creation and
 non-empty deletion checks also require PutObject, GetObject and DeleteObject
-support. The object listing checks require PutObject and DeleteObject support.
+support. The HeadObject and object listing checks require PutObject and DeleteObject support.
 The bucket listing check follows up to 1,000 pages when looking for its two test
 buckets.
 
@@ -70,6 +73,6 @@ continues after failures, so each implemented test should manage its own setup,
 use isolated resource names, and clean up resources in `finally` even if an
 assertion fails. Add new sections to the suite list in `index.js`.
 
-Run `pnpm test:unit` to test the runner, startup behavior, bucket, listing, CORS
+Run `pnpm test:unit` to test the runner, startup behavior, bucket, HeadObject, listing, CORS
 and encryption checks offline using mock services. This does not run the S3
 operation checks against a real endpoint.
