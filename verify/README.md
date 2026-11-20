@@ -73,11 +73,13 @@ permissions, versioning, and directory buckets are not exercised.
 CompleteMultipartUpload checks selected parts and assembly, empty objects, response
 and metadata, overwriting an object, independent uploads across keys and buckets,
 invalid part order, ETags, missing parts and undersized non-final parts, recovery
-after rejection, and missing, aborted or completed uploads and buckets. Completion
+after rejection, and missing or aborted uploads and buckets. A repeated completion of a
+completed upload may return the original result (as on AWS) or fail with `NoSuchUpload`;
+either way the object must be unchanged. Completion
 errors are accepted either with their usual HTTP status or embedded in an HTTP 200
 response (which the AWS SDK reports as 503); an ordinary 503 is not accepted. Checksums,
 conditional completion and versioning are not exercised. AbortMultipartUpload checks removal of uploads
-and parts, repeat and invalid aborts, preservation of existing objects and other
+and parts, repeated aborts (which may succeed as on AWS or fail with `NoSuchUpload`) and invalid aborts, preservation of existing objects and other
 uploads across keys and buckets, completion of a surviving upload, empty uploads,
 and a missing bucket.
 These checks require ListMultipartUploads, ListParts, UploadPart,
@@ -89,20 +91,11 @@ as `BLOCKED` with the failed prerequisite rather than as a failure of the
 operation under test; blocked checks also fail the run. Incorrect content in a
 successful listing is still attributed to the operation under test. CORS configuration checks cover multiple ordered rules and their
 fields, replacement, bucket isolation, the 100-rule limit, invalid inputs, and
-missing configurations and buckets. CORS behavior checks apply a stored
-configuration to requests: unauthenticated preflight `OPTIONS` requests check
-matching and nonmatching origins (including wildcard origins, schemes, ports and
-suffixes), methods and requested headers (including wildcard `AllowedHeaders`),
-that the first matching rule answers (its methods and `Access-Control-Max-Age`),
-and that every requested header is listed literally or as `*` in
-`Access-Control-Allow-Headers`. Signed GET, HEAD and PUT requests with an
-`Origin` header check `Access-Control-Allow-Origin`, `Access-Control-Expose-Headers`
-and `Vary: Origin` on matching responses, and that unmatched requests succeed
-without CORS headers. Preflights are rejected with HTTP 403 before a
-configuration exists, after replacement and deletion, and on another bucket.
-A `*` origin rule may answer with `*` or the request origin. The rejected
-preflight's error code, incomplete preflights, `Access-Control-Allow-Credentials`
-and missing buckets are not checked. Encryption checks verify the SSE-S3 default
+missing configurations and buckets. CORS header checks apply a stored configuration to signed GET, HEAD and PUT requests with an
+`Origin` header, checking `Access-Control-Allow-Origin`, `Access-Control-Expose-Headers` and
+`Vary: Origin` on matching responses, and that unmatched requests succeed without CORS headers.
+A `*` origin rule may answer with `*` or the request origin. Preflight `OPTIONS` requests,
+`Access-Control-Allow-Credentials` and missing buckets are not checked. Encryption checks verify the SSE-S3 default
 configuration on a newly created bucket and the missing-bucket error. Changing
 encryption configuration is outside the planned scope. A connection error stops the run, and any
 connection or check failure gives a nonzero exit status.
@@ -200,8 +193,8 @@ upload in a missing bucket, both the bucket and the upload are missing. S3 does
 not document which error takes precedence, so the checks accept either
 `NoSuchBucket` or `NoSuchUpload`, provided the status is 404. Floci returns
 `NoSuchUpload`, which is therefore not treated as a defect. They are retained to verify S3's validation rules.
-The CORS checks verify configuration APIs; they do not test HTTP preflight or
-response headers.
+The CORS configuration checks verify the configuration APIs; the CORS header checks inspect
+headers on signed requests. Preflight requests are not tested.
 
 ## Implementing checks
 
