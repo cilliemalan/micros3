@@ -7,7 +7,7 @@ region supplied by `../floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket,
 object listing, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
-CreateMultipartUpload, CORS configuration, and encryption checks are implemented; the other operation checks remain failing stubs.
+CreateMultipartUpload, AbortMultipartUpload, CORS configuration, and encryption checks are implemented; the other operation checks remain failing stubs.
 
 ## Setup and cleanup
 
@@ -55,8 +55,8 @@ CreateMultipartUpload, CORS configuration, and encryption checks are implemented
 - [ ] **ListMultipartUploads**: confirm an in-progress upload is listed.
 - [ ] **CompleteMultipartUpload**: complete an upload and verify the assembled
       object's content.
-- [ ] **AbortMultipartUpload**: abort an in-progress upload and confirm it is no
-      longer listed.
+- [x] **AbortMultipartUpload**: verify removal of uploads and parts, repeated and
+      invalid aborts, object and upload isolation, empty uploads, and a missing bucket.
 
 ## CORS and encryption
 

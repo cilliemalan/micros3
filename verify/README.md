@@ -28,7 +28,11 @@ the 1,000-key limit, and a missing bucket. It does not exercise per-key errors
 requiring permissions or versioned deletions (versioning is outside scope).
 CreateMultipartUpload checks unique upload IDs, simultaneous uploads for the same
 and neighboring keys, non-destructive initiation, independent completion and
-metadata, and a missing bucket. It requires ListMultipartUploads, UploadPart,
+metadata, and a missing bucket. AbortMultipartUpload checks removal of uploads
+and parts, repeat and invalid aborts, preservation of existing objects and other
+uploads across keys and buckets, completion of a surviving upload, empty uploads,
+and a missing bucket.
+These checks require ListMultipartUploads, ListParts, UploadPart,
 CompleteMultipartUpload and AbortMultipartUpload support. CORS configuration checks cover multiple ordered rules and their
 fields, replacement, bucket isolation, the 100-rule limit, invalid inputs, and
 missing configurations and buckets. Encryption checks verify the SSE-S3 default
@@ -64,7 +68,7 @@ environment file.
 a custom endpoint, the AWS SDK uses its default AWS S3 endpoint and credentials,
 so ensure the intended endpoint and credentials are configured before running.
 The bucket, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
-listing, multipart creation, CORS and encryption checks create uniquely named buckets and temporary
+listing, multipart creation and abort, CORS and encryption checks create uniquely named buckets and temporary
 objects, uploads or CORS configurations. They attempt cleanup even after failures;
 cleanup errors identify the affected resources, which may need manual removal.
 A rejected creation is not cleaned up when the response could indicate a bucket
@@ -83,9 +87,10 @@ lost or retried creation responses; listing failures may require manual cleanup.
 The configured Floci instance currently accepts invalid bucket names, invalid
 CORS configurations and DeleteObjects requests with more than 1,000 keys; its
 CopyObject metadata replacement also retains old headers. Multipart listings omit
-`IsTruncated`, preventing the multipart creation check and leaving cleanup unable
+`IsTruncated`, preventing the multipart creation and abort checks and leaving cleanup unable
 to confirm that every upload was discovered. When the flag is normalized for
-investigation, Floci also loses the initiation's Cache-Control on completion.
+investigation, Floci also loses the initiation's Cache-Control on completion and
+returns NoSuchUpload instead of NoSuchBucket when aborting in a missing bucket.
 Those checks fail against it. They are retained to verify S3's validation rules.
 The CORS checks verify configuration APIs; they do not test HTTP preflight or
 response headers.
@@ -100,6 +105,6 @@ use isolated resource names, and clean up resources in `finally` even if an
 assertion fails. Add new sections to the suite list in `index.js`.
 
 Run `pnpm test:unit` to test the runner, startup behavior, bucket, PutObject,
-GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects, listing, multipart creation, CORS and encryption
+GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects, listing, multipart creation and abort, CORS and encryption
 checks offline using mock services. This does not run the S3
 operation checks against a real endpoint.
