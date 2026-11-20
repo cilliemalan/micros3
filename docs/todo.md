@@ -1,9 +1,15 @@
 # S3 verification plan
 
+This todo list is regarding the verifier application 
+in `verify`. It is a nodejs application using pnpm 
+for package management.
+
+## Summary
+
 The verifier will check the basic S3 operations listed in
-[lib/README.md](../lib/README.md). First run the checks against the already-running
+[lib/README.md](lib/README.md). First run the checks against the already-running
 Floci instance to validate the verifier, using the endpoint, credentials, and
-region supplied by `../floci.env` (loaded with `-e` or `--env`). Then use the
+region supplied by `floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket,
 object listing, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
@@ -14,7 +20,7 @@ CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload
 ### Results and limitations
 
 - The offline suite passed all 153 tests (`npm run test:unit`). The configured
-  Floci run (`npm test -- -e ../floci.env`) reported 20 passes and 13 failures.
+  Floci run (`npm test -- -e floci.env`) reported 20 passes and 13 failures.
   A check stops at its first assertion failure, so this is not a count of all
   defects or proof that later scenarios passed. The six buckets retained by this
   run listed no uploads or objects and were manually removed afterward. Because
@@ -88,7 +94,7 @@ CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload
       distinguish reference-service limitations from verifier defects.
 - [ ] Resolve the undocumented `ListParts` dependency: it is required by the
       UploadPart, CompleteMultipartUpload and AbortMultipartUpload checks but
-      is not in [MicroS3's planned operations](../lib/README.md). Either add it
+      is not in [MicroS3's planned operations](lib/README.md). Either add it
       to the supported contract and verify it, including pagination, or design
       equivalent checks without requiring it. Report missing prerequisites
       separately from the operation being tested.
