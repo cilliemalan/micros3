@@ -4,7 +4,7 @@ import {
   DeleteBucketCommand, GetObjectCommand, ListPartsCommand, PutObjectCommand, UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { withUploadCleanup } from './multipart-cleanup.js';
-import { assertMissing, assertStatus, withBucket } from './resources.js';
+import { assertMissing, assertS3Error, assertStatus, withBucket } from './resources.js';
 
 export async function verifyCompleteMultipartUpload(client) {
   await withBucket(client, async ({ Bucket, retainForUploads }) => {
@@ -42,19 +42,18 @@ export async function verifyCompleteMultipartUpload(client) {
       const tiny1 = await upload(neighbor, small, 1, Buffer.from('too small'));
       const tiny2 = await upload(neighbor, small, 2, Buffer.from('last'));
       assertStatus(await client.send(new AbortMultipartUploadCommand({ Bucket, Key: neighbor, UploadId: aborted })), 204, 'AbortMultipartUpload setup');
-      const complete = (key, UploadId, Parts) => client.send(new CompleteMultipartUploadCommand({ Bucket, Key: key, UploadId, MultipartUpload: { Parts } }));
-      const reject = async (action, code) => assert.rejects(action, error => {
-        assert.equal(error.$metadata?.httpStatusCode, 400, `${code} HTTP status`);
-        assert.equal(error.name, code, `${code} error code`);
-        return true;
-      }, `CompleteMultipartUpload should reject with ${code}`);
-      await reject(() => complete(Key, id, [p3, p1]), 'InvalidPartOrder');
-      await reject(() => complete(Key, id, [p1, { ...p3, ETag: '"incorrect-etag"' }]), 'InvalidPart');
-      await reject(() => complete(Key, id, [p1, { PartNumber: 4, ETag: p3.ETag }]), 'InvalidPart');
-      await reject(() => complete(neighbor, small, [tiny1, tiny2]), 'EntityTooSmall');
-      await assertMissing(() => complete(neighbor, id, [p1]), 'CompleteMultipartUpload wrong key', 'NoSuchUpload');
-      await assertMissing(() => complete(Key, 'nonexistent-upload-id', [p1]), 'CompleteMultipartUpload missing upload', 'NoSuchUpload');
-      await assertMissing(() => complete(neighbor, aborted, [tiny1]), 'CompleteMultipartUpload aborted upload', 'NoSuchUpload');
+      const command = (key, UploadId, Parts, bucket = Bucket) => new CompleteMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId, MultipartUpload: { Parts } });
+      const complete = (key, UploadId, Parts) => client.send(command(key, UploadId, Parts));
+      // Completion errors may be embedded in an HTTP 200 response.
+      const reject = (key, UploadId, Parts, expectedStatus, code, operation, bucket = Bucket) =>
+        assertS3Error(client, command(key, UploadId, Parts, bucket), expectedStatus, code, operation);
+      await reject(Key, id, [p3, p1], 400, 'InvalidPartOrder', 'CompleteMultipartUpload descending parts');
+      await reject(Key, id, [p1, { ...p3, ETag: '"incorrect-etag"' }], 400, 'InvalidPart', 'CompleteMultipartUpload incorrect ETag');
+      await reject(Key, id, [p1, { PartNumber: 4, ETag: p3.ETag }], 400, 'InvalidPart', 'CompleteMultipartUpload missing part');
+      await reject(neighbor, small, [tiny1, tiny2], 400, 'EntityTooSmall', 'CompleteMultipartUpload undersized part');
+      await reject(neighbor, id, [p1], 404, 'NoSuchUpload', 'CompleteMultipartUpload wrong key');
+      await reject(Key, 'nonexistent-upload-id', [p1], 404, 'NoSuchUpload', 'CompleteMultipartUpload missing upload');
+      await reject(neighbor, aborted, [tiny1], 404, 'NoSuchUpload', 'CompleteMultipartUpload aborted upload');
       const before = await client.send(new GetObjectCommand({ Bucket, Key }));
       assertStatus(before, 200, 'GetObject after failed completions');
       assert.deepEqual(Buffer.from(await before.Body.transformToByteArray()), original, 'failed completions preserve existing object');
@@ -72,7 +71,7 @@ export async function verifyCompleteMultipartUpload(client) {
           const part = await client.send(new UploadPartCommand({ Bucket: otherBucket, Key, UploadId: created.UploadId, PartNumber: 1, Body: last }));
           assertStatus(part, 200, 'UploadPart other bucket');
           assert.ok(typeof part.ETag === 'string' && part.ETag, 'other bucket part ETag');
-          await assertMissing(() => client.send(new CompleteMultipartUploadCommand({ Bucket: otherBucket, Key, UploadId: id, MultipartUpload: { Parts: [p1] } })), 'CompleteMultipartUpload wrong bucket', 'NoSuchUpload');
+          await reject(Key, id, [p1], 404, 'NoSuchUpload', 'CompleteMultipartUpload wrong bucket', otherBucket);
           const completed = await client.send(new CompleteMultipartUploadCommand({ Bucket: otherBucket, Key, UploadId: created.UploadId, MultipartUpload: { Parts: [{ PartNumber: 1, ETag: part.ETag }] } }));
           assertStatus(completed, 200, 'CompleteMultipartUpload other bucket');
           const object = await client.send(new GetObjectCommand({ Bucket: otherBucket, Key }));
@@ -93,7 +92,7 @@ export async function verifyCompleteMultipartUpload(client) {
       assert.equal(object.ContentType, 'application/octet-stream', 'initiation ContentType');
       assert.equal(object.CacheControl, 'max-age=123', 'initiation CacheControl');
       assert.deepEqual(object.Metadata, { purpose: 'complete' }, 'initiation metadata');
-      await assertMissing(() => complete(Key, id, [p1, p3]), 'CompleteMultipartUpload completed upload', 'NoSuchUpload');
+      await reject(Key, id, [p1, p3], 404, 'NoSuchUpload', 'CompleteMultipartUpload completed upload');
       await assertMissing(() => client.send(new ListPartsCommand({ Bucket, Key, UploadId: id })), 'ListParts completed upload', 'NoSuchUpload');
       const survivor = await complete(Key, other, [otherPart]);
       assertStatus(survivor, 200, 'CompleteMultipartUpload independent upload');
@@ -117,7 +116,7 @@ export async function verifyCompleteMultipartUpload(client) {
   await withBucket(client, async ({ Bucket, retainForUploads }) => {
     await withUploadCleanup(client, Bucket, ['missing'], retainForUploads, async () => {
       assertStatus(await client.send(new DeleteBucketCommand({ Bucket })), 204, 'DeleteBucket setup');
-      await assertMissing(() => client.send(new CompleteMultipartUploadCommand({ Bucket, Key: 'missing', UploadId: 'missing', MultipartUpload: { Parts: [{ PartNumber: 1, ETag: '"missing"' }] } })), 'CompleteMultipartUpload missing bucket', 'NoSuchBucket');
+      await assertS3Error(client, new CompleteMultipartUploadCommand({ Bucket, Key: 'missing', UploadId: 'missing', MultipartUpload: { Parts: [{ PartNumber: 1, ETag: '"missing"' }] } }), 404, 'NoSuchBucket', 'CompleteMultipartUpload missing bucket');
     });
   });
 }

@@ -108,3 +108,42 @@ export async function assertMissing(action, operation, errorCode) {
     return true;
   }, `${operation} should reject a missing bucket`);
 }
+
+const rawStatuses = new WeakMap();
+
+// S3 can report a failure in the body of an HTTP 200 response (notably
+// CompleteMultipartUpload and CopyObject). The SDK's throw200Exceptions
+// middleware then rewrites the response status to 503 in place, so record the
+// status received from the wire before that happens. The recorder sits inside
+// that middleware and keeps the last attempt's status when the SDK retries.
+export function recordRawStatus(command) {
+  command.middlewareStack.addRelativeTo(next => async args => {
+    const result = await next(args);
+    rawStatuses.set(command, result.response?.statusCode);
+    return result;
+  }, {
+    relation: 'after',
+    toMiddleware: 'throw200ExceptionsMiddleware',
+    name: 'micros3VerifyRawStatus',
+    override: true,
+  });
+  return command;
+}
+
+export function embeddedError(command, error) {
+  const raw = rawStatuses.get(command);
+  return raw >= 200 && raw < 300 && status(error) === 503;
+}
+
+// Expect an S3 error with the given code and HTTP status, also accepting the
+// same code embedded in a 200 response. An ordinary 503 does not qualify.
+export async function assertS3Error(client, command, expectedStatus, code, operation) {
+  recordRawStatus(command);
+  await assert.rejects(() => client.send(command), error => {
+    if (!embeddedError(command, error)) {
+      assert.equal(status(error), expectedStatus, `${operation} should return HTTP ${expectedStatus}`);
+    }
+    assert.equal(error.name, code, `${operation} error code`);
+    return true;
+  }, `${operation} should reject with ${code}`);
+}

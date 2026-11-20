@@ -63,7 +63,7 @@ CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload
 
 ### Correctness and trustworthy results
 
-- [ ] Fix multipart completion error handling in
+- [x] Fix multipart completion error handling in
       [complete-multipart-upload.js](checks/complete-multipart-upload.js).
       S3 can embed an error in an HTTP 200 response. A local HTTP fixture using
       the installed AWS SDK and `maxAttempts: 1` returned an `EntityTooSmall`

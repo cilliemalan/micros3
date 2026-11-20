@@ -39,7 +39,9 @@ permissions, versioning, and directory buckets are not exercised.
 CompleteMultipartUpload checks selected parts and assembly, empty objects, response
 and metadata, overwriting an object, independent uploads across keys and buckets,
 invalid part order, ETags, missing parts and undersized non-final parts, recovery
-after rejection, and missing, aborted or completed uploads and buckets. Checksums,
+after rejection, and missing, aborted or completed uploads and buckets. Completion
+errors are accepted either with their usual HTTP status or embedded in an HTTP 200
+response (which the AWS SDK reports as 503); an ordinary 503 is not accepted. Checksums,
 conditional completion and versioning are not exercised. AbortMultipartUpload checks removal of uploads
 and parts, repeat and invalid aborts, preservation of existing objects and other
 uploads across keys and buckets, completion of a surviving upload, empty uploads,

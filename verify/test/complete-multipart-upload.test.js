@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import test from 'node:test';
 import {
   AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateBucketCommand, CreateMultipartUploadCommand,
   DeleteBucketCommand, DeleteObjectCommand, GetObjectCommand, ListMultipartUploadsCommand, ListPartsCommand,
-  PutObjectCommand, UploadPartCommand,
+  PutObjectCommand, S3Client, UploadPartCommand,
 } from '@aws-sdk/client-s3';
+import { assertS3Error } from '../checks/resources.js';
 import checks from '../checks/multipart.js';
 
 const run = checks.find(check => check.name === 'CompleteMultipartUpload').run;
@@ -197,4 +199,60 @@ test('cleanup reports failures and attempts all known resources', async () => {
   assert.equal(client.calls.filter(c => c instanceof DeleteObjectCommand).length, 3);
   assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 0);
   assert.equal(client.buckets.size, 1);
+});
+
+// Real SDK over HTTP: S3 can embed an error in a 200 response, which the SDK
+// reports as a retryable 503. Responses are served in order, the last repeating.
+async function completeAgainst(t, responses, maxAttempts = 1) {
+  let requests = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on('end', () => {
+      const [statusCode, body] = responses[Math.min(requests++, responses.length - 1)];
+      response.writeHead(statusCode, { 'content-type': 'application/xml', 'x-amz-request-id': 'request' });
+      response.end(body);
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const client = new S3Client({
+    endpoint: `http://127.0.0.1:${server.address().port}`, region: 'us-east-1', forcePathStyle: true, maxAttempts,
+    credentials: { accessKeyId: 'test-key', secretAccessKey: 'test-secret' },
+  });
+  t.after(() => client.destroy());
+  const command = new CompleteMultipartUploadCommand({ Bucket: 'bucket', Key: 'key', UploadId: 'upload', MultipartUpload: { Parts: [{ PartNumber: 1, ETag: '"etag"' }] } });
+  return { action: () => assertS3Error(client, command, 400, 'EntityTooSmall', 'CompleteMultipartUpload'), requests: () => requests };
+}
+const errorXml = code => `<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>${code}</Code><Message>failed</Message><RequestId>request</RequestId></Error>`;
+const successXml = '<?xml version="1.0" encoding="UTF-8"?>\n<CompleteMultipartUploadResult><Bucket>bucket</Bucket><Key>key</Key><ETag>"etag-1"</ETag></CompleteMultipartUploadResult>';
+
+test('S3 error assertions accept errors embedded in HTTP 200 responses', async t => {
+  await (await completeAgainst(t, [[200, errorXml('EntityTooSmall')]])).action();
+});
+
+test('S3 error assertions accept ordinary errors with the expected status', async t => {
+  await (await completeAgainst(t, [[400, errorXml('EntityTooSmall')]])).action();
+});
+
+test('S3 error assertions accept an embedded error after a retry', async t => {
+  const fixture = await completeAgainst(t, [[503, errorXml('SlowDown')], [200, errorXml('EntityTooSmall')]], 3);
+  await fixture.action();
+  assert.ok(fixture.requests() >= 2, 'SDK retried');
+});
+
+test('S3 error assertions reject ordinary 503s, wrong codes, empty 200s and successes', async t => {
+  const cases = [
+    ['ordinary 503', [503, errorXml('EntityTooSmall')], /HTTP 400/],
+    ['wrong status', [500, errorXml('EntityTooSmall')], /HTTP 400/],
+    ['embedded wrong code', [200, errorXml('InvalidPart')], /error code/],
+    ['wrong code', [400, errorXml('InvalidPart')], /error code/],
+    ['empty 200', [200, ''], /error code/],
+    ['success', [200, successXml], /should reject with EntityTooSmall/],
+    ['embedded then ordinary 503', null, /HTTP 400/],
+  ];
+  for (const [name, response, pattern] of cases) {
+    const responses = response ? [response] : [[200, errorXml('EntityTooSmall')], [503, errorXml('EntityTooSmall')]];
+    const fixture = await completeAgainst(t, responses, response ? 1 : 2);
+    await assert.rejects(fixture.action(), pattern, name);
+  }
 });
