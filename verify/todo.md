@@ -6,8 +6,8 @@ Floci instance to validate the verifier, using the endpoint, credentials, and
 region supplied by `../floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket,
-object listing, and CORS configuration checks are implemented; the other
-operation checks remain failing stubs.
+object listing, CORS configuration, and encryption checks are implemented; the
+other operation checks remain failing stubs.
 
 ## Setup and cleanup
 
@@ -60,7 +60,8 @@ operation checks remain failing stubs.
       without a configuration and a missing bucket.
 - [x] **DeleteBucketCors**: delete the configuration, confirm it is removed,
       check repeat deletion and a missing bucket, and recreate it.
-- [ ] **GetBucketEncryption**: check the response for bucket encryption configuration.
+- [x] **GetBucketEncryption**: verify a new bucket's default SSE-S3 encryption
+      configuration and check a missing bucket.
 
 Bucket and object tagging, ACLs, bucket policies, versioning, replication,
 object locking, website configuration, changes to bucket encryption, S3 Table,
