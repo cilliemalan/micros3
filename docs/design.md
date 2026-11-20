@@ -142,7 +142,8 @@ Schema:
 CREATE TABLE buckets (
   name TEXT PRIMARY KEY,
   created_ms INTEGER NOT NULL,
-  cors_xml TEXT                       -- NULL when no configuration is set
+  cors_xml TEXT,                      -- NULL when no configuration is set
+  region TEXT NOT NULL DEFAULT 'us-east-1'  -- LocationConstraint at creation
 );
 CREATE TABLE objects (
   bucket TEXT NOT NULL REFERENCES buckets(name),

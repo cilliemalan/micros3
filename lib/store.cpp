@@ -13,7 +13,8 @@ constexpr const char *kSchema = R"sql(
 CREATE TABLE IF NOT EXISTS buckets (
   name TEXT PRIMARY KEY,
   created_ms INTEGER NOT NULL,
-  cors_xml TEXT
+  cors_xml TEXT,
+  region TEXT NOT NULL DEFAULT 'us-east-1'
 );
 CREATE TABLE IF NOT EXISTS objects (
   bucket TEXT NOT NULL REFERENCES buckets(name),
@@ -76,6 +77,15 @@ void configure(db::Database &db) {
 void create_schema(db::Database &db) {
     db::Transaction txn(db);
     db.exec(kSchema);
+    // Databases created before buckets had a region get the column added.
+    bool has_region = false;
+    {
+        db::Statement columns = db.prepare("SELECT name FROM pragma_table_info('buckets')");
+        while (columns.step()) {
+            if (columns.column_text(0) == "region") has_region = true;
+        }
+    }
+    if (!has_region) db.exec("ALTER TABLE buckets ADD COLUMN region TEXT NOT NULL DEFAULT 'us-east-1'");
     txn.commit();
 }
 

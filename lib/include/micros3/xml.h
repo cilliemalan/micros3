@@ -36,6 +36,8 @@ public:
     Writer &close();
     // Writes <name>text</name>.
     Writer &element(std::string_view name, std::string_view text);
+    // Writes escaped text inside the innermost open element.
+    Writer &text(std::string_view text);
 
     // Closes any open elements and returns the document.
     std::string finish();

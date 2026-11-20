@@ -6,6 +6,7 @@
 #include "micros3/http.h"
 #include "micros3/router.h"
 #include "micros3/sigv4.h"
+#include "micros3/store.h"
 
 #include <utility>
 
@@ -13,11 +14,12 @@ namespace micros3 {
 
 class S3Service : public http::Service {
 public:
-    explicit S3Service(sigv4::Credentials credentials) : credentials_(std::move(credentials)) {}
+    S3Service(Store &store, sigv4::Credentials credentials) : store_(store), credentials_(std::move(credentials)) {}
 
     std::unique_ptr<http::Exchange> begin(const http::Request &request) override;
 
 private:
+    Store &store_;
     sigv4::Credentials credentials_;
 };
 

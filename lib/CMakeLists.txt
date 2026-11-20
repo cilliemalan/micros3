@@ -1,7 +1,11 @@
 add_library(libmicros3 STATIC
+    bucket_handlers.cpp
+    buckets.cpp
+    clock.cpp
     config.cpp
     db.cpp
     digest.cpp
+    handlers.cpp
     http.cpp
     router.cpp
     server.cpp

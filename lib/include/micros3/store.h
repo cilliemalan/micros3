@@ -54,7 +54,8 @@ namespace store {
 // foreign keys on.
 void configure(db::Database &db);
 
-// Creates the four tables if they are missing.
+// Creates the four tables if they are missing, and adds columns that older
+// databases lack (buckets.region).
 void create_schema(db::Database &db);
 
 } // namespace store

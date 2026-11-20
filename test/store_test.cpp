@@ -2,6 +2,8 @@
 
 #include "micros3/store.h"
 
+#include "temp_dir.h"
+
 #include <gtest/gtest.h>
 
 #include <fstream>
@@ -18,22 +20,7 @@ using micros3::db::Transaction;
 
 namespace {
 
-class TempDir {
-public:
-    TempDir() {
-        std::random_device rd;
-        path_ = fs::temp_directory_path() / ("micros3-test-" + std::to_string(rd()) + std::to_string(rd()));
-        fs::create_directories(path_);
-    }
-    ~TempDir() {
-        std::error_code ec;
-        fs::remove_all(path_, ec);
-    }
-    const fs::path &path() const { return path_; }
-
-private:
-    fs::path path_;
-};
+using micros3::test::TempDir;
 
 void touch(const fs::path &path, const std::string &contents = "x") {
     std::ofstream(path, std::ios::binary) << contents;

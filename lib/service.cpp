@@ -1,5 +1,7 @@
 #include "micros3/service.h"
 
+#include "micros3/handlers.h"
+
 #include <string>
 #include <variant>
 
@@ -52,9 +54,11 @@ std::unique_ptr<http::Exchange> S3Service::begin(const http::Request &request) {
     }
     if (auto error = router::route_error(route)) return fixed(*error);
 
-    // No operation is implemented yet.
-    const std::string message = std::string(router::name(route.op)) + " is not implemented yet.";
-    std::unique_ptr<http::Exchange> exchange = fixed(not_implemented(message));
+    std::unique_ptr<http::Exchange> exchange = handlers::begin(store_, request, route);
+    if (!exchange) {
+        const std::string message = std::string(router::name(route.op)) + " is not implemented yet.";
+        exchange = fixed(not_implemented(message));
+    }
     if (expected_payload) {
         exchange = std::make_unique<PayloadHashExchange>(std::move(exchange), *expected_payload, request);
     }

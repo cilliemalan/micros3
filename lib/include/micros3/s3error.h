@@ -22,4 +22,19 @@ inline S3Error invalid_uri(std::string message = "Couldn't parse the specified U
     return {400, "InvalidURI", std::move(message)};
 }
 
+inline S3Error invalid_argument(std::string message) { return {400, "InvalidArgument", std::move(message)}; }
+
+inline S3Error malformed_xml() {
+    return {400, "MalformedXML",
+            "The XML you provided was not well-formed or did not validate against our published schema."};
+}
+
+inline S3Error max_message_length_exceeded() {
+    return {400, "MaxMessageLengthExceeded", "Your request was too big."};
+}
+
+inline S3Error no_such_bucket() { return {404, "NoSuchBucket", "The specified bucket does not exist"}; }
+
+inline S3Error internal_error() { return {500, "InternalError", "We encountered an internal error. Please try again."}; }
+
 } // namespace micros3

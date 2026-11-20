@@ -129,6 +129,11 @@ Writer &Writer::element(std::string_view name, std::string_view text) {
     return *this;
 }
 
+Writer &Writer::text(std::string_view text) {
+    out_ += escape(text);
+    return *this;
+}
+
 std::string Writer::finish() {
     while (!open_.empty()) close();
     return std::move(out_);

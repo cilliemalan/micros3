@@ -49,14 +49,14 @@ All are recorded in design.md. Nothing here is open.
 
 ## Phase 2: Buckets
 
-- [ ] Bucket name validation against the AWS rules (3 to 63 characters, lowercase letters, digits and hyphens, alphanumeric at each end, no adjacent dots, not an IP-address form, no `xn--` prefix or `-s3alias` suffix). Return `InvalidBucketName` (400). Underscores are rejected (see Floci).
-- [ ] ListBuckets: `Owner`, `Buckets`, `CreationDate` (ISO 8601).
-- [ ] CreateBucket: 200 with `Location`. A repeat returns `BucketAlreadyOwnedByYou` (409) and keeps the bucket. Check `bucket.js` for how a `LocationConstraint` is handled.
-- [ ] HeadBucket: 200, or 404 with no body.
-- [ ] GetBucketLocation: match what `bucket.js` asserts for us-east-1.
-- [ ] DeleteBucket (D1): 204. Missing bucket returns `NoSuchBucket`. A bucket with objects returns `BucketNotEmpty` (409). A bucket whose only contents are uploads is deleted with its upload and part rows, and the part blob files are removed after the commit.
+- [x] Bucket name validation against the AWS rules (3 to 63 characters, lowercase letters, digits and hyphens, alphanumeric at each end, no adjacent dots, not an IP-address form, no `xn--` prefix or `-s3alias` suffix). Return `InvalidBucketName` (400). Underscores are rejected (see Floci). (`buckets::valid_name` in `lib/buckets.cpp`, which also rejects the other reserved prefixes and suffixes AWS lists. Checked on CreateBucket only. Other operations on such a name answer `NoSuchBucket`.)
+- [x] ListBuckets: `Owner`, `Buckets`, `CreationDate` (ISO 8601). (Also `BucketRegion`, and `max-buckets`, `continuation-token` (base64 of the last name), `prefix` and `bucket-region`.)
+- [x] CreateBucket: 200 with `Location`. A repeat returns `BucketAlreadyOwnedByYou` (409) and keeps the bucket. Check `bucket.js` for how a `LocationConstraint` is handled. (`bucket.js` expects the legacy 200 for a repeat in us-east-1, as S3 gives, and 409 elsewhere. Each bucket stores its region, from the body's `LocationConstraint` (default us-east-1), in a new `buckets.region` column that is added to older databases at startup. A malformed body is `MalformedXML` and a bad region is `InvalidLocationConstraint`.)
+- [x] HeadBucket: 200, or 404 with no body. (200 carries `x-amz-bucket-region`.)
+- [x] GetBucketLocation: match what `bucket.js` asserts for us-east-1. (An empty `LocationConstraint` for us-east-1, else the region.)
+- [x] DeleteBucket (D1): 204. Missing bucket returns `NoSuchBucket`. A bucket with objects returns `BucketNotEmpty` (409). A bucket whose only contents are uploads is deleted with its upload and part rows, and the part blob files are removed after the commit.
 
-**Checks:** `bucket.js`, `resources.js`.
+**Checks:** `bucket.js`, `resources.js`. (On 2026-11-20, six of the eight bucket checks passed in us-east-1 and eu-west-1. The two repeat-creation and non-empty checks need PutObject and DeleteObject from Phase 3.)
 
 ## Phase 3: Objects
 

@@ -1,6 +1,9 @@
 #include "micros3/server.h"
 #include "micros3/service.h"
 #include "micros3/sigv4.h"
+#include "micros3/store.h"
+
+#include "temp_dir.h"
 
 #include <gtest/gtest.h>
 
@@ -201,6 +204,13 @@ TEST(Server, KeepAliveServesSeveralRequests) {
 
 const micros3::sigv4::Credentials kCredentials{"test", "test"};
 
+// An S3Service over a store in a fresh temporary directory.
+struct TestService {
+    micros3::test::TempDir dir;
+    micros3::Store store{dir.path()};
+    micros3::S3Service service{store, kCredentials};
+};
+
 // A raw HTTP/1.1 request, signed with `credentials` when they are given.
 std::string s3_request(const std::string &method, const std::string &target, const std::string &body = "",
                        const std::optional<micros3::sigv4::Credentials> &credentials = kCredentials,
@@ -229,8 +239,8 @@ std::string s3_request(const std::string &method, const std::string &target, con
 }
 
 TEST(S3Service, UnsupportedSubresourceIsNotImplementedXml) {
-    micros3::S3Service service(kCredentials);
-    RunningServer server(service);
+    TestService s3;
+    RunningServer server(s3.service);
     const std::string response = exchange(server.port(), s3_request("PUT", "/bucket/key?tagging", "hello"));
     EXPECT_EQ(response.rfind("HTTP/1.1 501 Not Implemented\r\n", 0), 0u) << response;
     EXPECT_EQ(header_value(response, "Content-Type"), "application/xml");
@@ -242,16 +252,16 @@ TEST(S3Service, UnsupportedSubresourceIsNotImplementedXml) {
 }
 
 TEST(S3Service, HeadErrorHasNoBody) {
-    micros3::S3Service service(kCredentials);
-    RunningServer server(service);
+    TestService s3;
+    RunningServer server(s3.service);
     const std::string response = exchange(server.port(), s3_request("HEAD", "/bucket/key?acl"));
     EXPECT_EQ(response.rfind("HTTP/1.1 501 Not Implemented\r\n", 0), 0u) << response;
     EXPECT_EQ(body_of(response), "");
 }
 
 TEST(S3Service, InvalidUriIsBadRequest) {
-    micros3::S3Service service(kCredentials);
-    RunningServer server(service);
+    TestService s3;
+    RunningServer server(s3.service);
     const std::string response =
         exchange(server.port(), "GET /bucket/%zz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
     EXPECT_EQ(response.rfind("HTTP/1.1 400 Bad Request\r\n", 0), 0u) << response;
@@ -259,8 +269,8 @@ TEST(S3Service, InvalidUriIsBadRequest) {
 }
 
 TEST(S3Service, UnsignedRequestIsAccessDenied) {
-    micros3::S3Service service(kCredentials);
-    RunningServer server(service);
+    TestService s3;
+    RunningServer server(s3.service);
     for (const char *target : {"/", "/bucket", "/bucket/key?tagging"}) {
         const std::string response = exchange(server.port(), s3_request("GET", target, "", std::nullopt));
         EXPECT_EQ(response.rfind("HTTP/1.1 403 Forbidden\r\n", 0), 0u) << response;
@@ -269,8 +279,8 @@ TEST(S3Service, UnsignedRequestIsAccessDenied) {
 }
 
 TEST(S3Service, WrongSecretIsSignatureDoesNotMatch) {
-    micros3::S3Service service(kCredentials);
-    RunningServer server(service);
+    TestService s3;
+    RunningServer server(s3.service);
     const std::string response =
         exchange(server.port(), s3_request("GET", "/", "", micros3::sigv4::Credentials{"test", "wrong"}));
     EXPECT_EQ(response.rfind("HTTP/1.1 403 Forbidden\r\n", 0), 0u) << response;
@@ -278,16 +288,15 @@ TEST(S3Service, WrongSecretIsSignatureDoesNotMatch) {
 }
 
 TEST(S3Service, SignedRequestPassesAuthentication) {
-    micros3::S3Service service(kCredentials);
-    RunningServer server(service);
-    // ListBuckets is not implemented yet, so a signed request reaches the 501.
+    TestService s3;
+    RunningServer server(s3.service);
     const std::string response = exchange(server.port(), s3_request("GET", "/"));
-    EXPECT_EQ(response.rfind("HTTP/1.1 501 Not Implemented\r\n", 0), 0u) << response;
+    EXPECT_EQ(response.rfind("HTTP/1.1 200 OK\r\n", 0), 0u) << response;
 }
 
 TEST(S3Service, PreflightNeedsNoSignature) {
-    micros3::S3Service service(kCredentials);
-    RunningServer server(service);
+    TestService s3;
+    RunningServer server(s3.service);
     const std::string response = exchange(server.port(), "OPTIONS /bucket/key HTTP/1.1\r\nHost: localhost\r\n"
                                                          "Origin: https://example.com\r\n"
                                                          "Access-Control-Request-Method: GET\r\n"
@@ -297,11 +306,171 @@ TEST(S3Service, PreflightNeedsNoSignature) {
 }
 
 TEST(S3Service, BodyNotMatchingPayloadHashIsRejected) {
-    micros3::S3Service service(kCredentials);
-    RunningServer server(service);
+    TestService s3;
+    RunningServer server(s3.service);
     const std::string hash = micros3::digest::hex(micros3::digest::sha256("original body"));
     const std::string response =
         exchange(server.port(), s3_request("PUT", "/bucket/key", "altered body!", kCredentials, hash));
     EXPECT_EQ(response.rfind("HTTP/1.1 400 Bad Request\r\n", 0), 0u) << response;
     EXPECT_NE(body_of(response).find("<Code>XAmzContentSHA256Mismatch</Code>"), std::string::npos) << response;
+}
+
+// Bucket operations, end to end over HTTP.
+
+namespace {
+
+bool status_is(const std::string &response, const std::string &status) {
+    return response.rfind("HTTP/1.1 " + status, 0) == 0;
+}
+
+bool has(const std::string &text, const std::string &part) { return text.find(part) != std::string::npos; }
+
+const std::string kEuConfig =
+    "<CreateBucketConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
+    "<LocationConstraint>eu-west-1</LocationConstraint></CreateBucketConfiguration>";
+
+} // namespace
+
+TEST(Buckets, ListIsEmptyAtFirst) {
+    TestService s3;
+    RunningServer server(s3.service);
+    const std::string response = exchange(server.port(), s3_request("GET", "/"));
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "Content-Type"), "application/xml");
+    const std::string body = body_of(response);
+    EXPECT_TRUE(has(body, "<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">")) << body;
+    EXPECT_TRUE(has(body, "<Buckets></Buckets>")) << body;
+    EXPECT_TRUE(has(body, "<Owner><DisplayName>")) << body;
+    EXPECT_FALSE(has(body, "<ContinuationToken>")) << body;
+}
+
+TEST(Buckets, CreateHeadLocationListDelete) {
+    TestService s3;
+    RunningServer server(s3.service);
+
+    std::string response = exchange(server.port(), s3_request("PUT", "/my-bucket"));
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "Location"), "/my-bucket");
+
+    response = exchange(server.port(), s3_request("HEAD", "/my-bucket"));
+    EXPECT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "x-amz-bucket-region"), "us-east-1");
+
+    response = exchange(server.port(), s3_request("GET", "/my-bucket?location"));
+    EXPECT_TRUE(status_is(response, "200")) << response;
+    EXPECT_TRUE(has(body_of(response),
+                    "<LocationConstraint xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"></LocationConstraint>"))
+        << response;
+
+    response = exchange(server.port(), s3_request("GET", "/"));
+    const std::string body = body_of(response);
+    EXPECT_TRUE(std::regex_search(body, std::regex("<Bucket><Name>my-bucket</Name><CreationDate>"
+                                                   "\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z</CreationDate>"
+                                                   "<BucketRegion>us-east-1</BucketRegion></Bucket>")))
+        << body;
+
+    response = exchange(server.port(), s3_request("DELETE", "/my-bucket"));
+    EXPECT_TRUE(status_is(response, "204")) << response;
+    EXPECT_EQ(body_of(response), "");
+
+    response = exchange(server.port(), s3_request("HEAD", "/my-bucket"));
+    EXPECT_TRUE(status_is(response, "404")) << response;
+    EXPECT_EQ(body_of(response), "");
+}
+
+TEST(Buckets, MissingBucketErrors) {
+    TestService s3;
+    RunningServer server(s3.service);
+    for (const auto &[method, target] : std::vector<std::pair<std::string, std::string>>{
+             {"GET", "/missing-bucket?location"}, {"DELETE", "/missing-bucket"}}) {
+        const std::string response = exchange(server.port(), s3_request(method, target));
+        EXPECT_TRUE(status_is(response, "404")) << response;
+        EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << response;
+    }
+}
+
+TEST(Buckets, InvalidNameIsRejected) {
+    TestService s3;
+    RunningServer server(s3.service);
+    const std::string response = exchange(server.port(), s3_request("PUT", "/micros3_verify_x"));
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>InvalidBucketName</Code>")) << response;
+    EXPECT_TRUE(has(body_of(exchange(server.port(), s3_request("GET", "/"))), "<Buckets></Buckets>"));
+}
+
+TEST(Buckets, RepeatCreateInUsEast1Succeeds) {
+    TestService s3;
+    RunningServer server(s3.service);
+    EXPECT_TRUE(status_is(exchange(server.port(), s3_request("PUT", "/repeat-bucket")), "200"));
+    EXPECT_TRUE(status_is(exchange(server.port(), s3_request("PUT", "/repeat-bucket")), "200"));
+}
+
+TEST(Buckets, RegionalBucketRepeatIsAlreadyOwned) {
+    TestService s3;
+    RunningServer server(s3.service);
+    ASSERT_TRUE(status_is(exchange(server.port(), s3_request("PUT", "/eu-bucket", kEuConfig)), "200"));
+
+    std::string response = exchange(server.port(), s3_request("PUT", "/eu-bucket", kEuConfig));
+    EXPECT_TRUE(status_is(response, "409")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>BucketAlreadyOwnedByYou</Code>")) << response;
+
+    response = exchange(server.port(), s3_request("GET", "/eu-bucket?location"));
+    EXPECT_TRUE(has(body_of(response), ">eu-west-1</LocationConstraint>")) << response;
+    response = exchange(server.port(), s3_request("HEAD", "/eu-bucket"));
+    EXPECT_EQ(header_value(response, "x-amz-bucket-region"), "eu-west-1");
+}
+
+TEST(Buckets, BadCreateConfiguration) {
+    TestService s3;
+    RunningServer server(s3.service);
+    std::string response = exchange(server.port(), s3_request("PUT", "/bad-config", "<CreateBucketConfiguration>"));
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>MalformedXML</Code>")) << response;
+
+    response = exchange(server.port(),
+                        s3_request("PUT", "/bad-config",
+                                   "<CreateBucketConfiguration><LocationConstraint>Mars 1</LocationConstraint>"
+                                   "</CreateBucketConfiguration>"));
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>InvalidLocationConstraint</Code>")) << response;
+}
+
+TEST(Buckets, DeleteRefusesBucketWithObjects) {
+    TestService s3;
+    RunningServer server(s3.service);
+    ASSERT_TRUE(status_is(exchange(server.port(), s3_request("PUT", "/full-bucket")), "200"));
+    s3.store.db().exec("INSERT INTO objects VALUES ('full-bucket', 'k', 'b', 1, 'e', 0, '{}')");
+    const std::string response = exchange(server.port(), s3_request("DELETE", "/full-bucket"));
+    EXPECT_TRUE(status_is(response, "409")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>BucketNotEmpty</Code>")) << response;
+    EXPECT_TRUE(status_is(exchange(server.port(), s3_request("HEAD", "/full-bucket")), "200"));
+}
+
+TEST(Buckets, ListPaginatesWithContinuationToken) {
+    TestService s3;
+    RunningServer server(s3.service);
+    for (const char *name : {"/page-a", "/page-b", "/page-c", "/other"}) {
+        ASSERT_TRUE(status_is(exchange(server.port(), s3_request("PUT", name)), "200"));
+    }
+    std::string body = body_of(exchange(server.port(), s3_request("GET", "/?max-buckets=2&prefix=page-")));
+    EXPECT_TRUE(has(body, "<Name>page-a</Name>")) << body;
+    EXPECT_TRUE(has(body, "<Name>page-b</Name>")) << body;
+    EXPECT_FALSE(has(body, "<Name>page-c</Name>")) << body;
+    EXPECT_TRUE(has(body, "<Prefix>page-</Prefix>")) << body;
+    std::smatch match;
+    ASSERT_TRUE(std::regex_search(body, match, std::regex("<ContinuationToken>([^<]*)</ContinuationToken>"))) << body;
+    std::string token;
+    for (char c : match[1].str()) {
+        token += c == '+' ? "%2B" : c == '/' ? "%2F" : c == '=' ? "%3D" : std::string(1, c);
+    }
+
+    body = body_of(
+        exchange(server.port(), s3_request("GET", "/?continuation-token=" + token + "&max-buckets=2&prefix=page-")));
+    EXPECT_TRUE(has(body, "<Name>page-c</Name>")) << body;
+    EXPECT_FALSE(has(body, "<Name>page-a</Name>")) << body;
+    EXPECT_FALSE(has(body, "<ContinuationToken>")) << body;
+
+    const std::string response = exchange(server.port(), s3_request("GET", "/?max-buckets=0"));
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>InvalidArgument</Code>")) << response;
 }

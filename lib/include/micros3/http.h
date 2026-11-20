@@ -11,6 +11,7 @@
 #include "micros3/s3error.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -83,6 +84,24 @@ public:
 
 private:
     Response response_;
+};
+
+// An exchange that collects a small body, then answers with `handler(body)`.
+// A body longer than `limit` bytes is answered with MaxMessageLengthExceeded
+// and the handler is not called.
+class BufferedExchange : public Exchange {
+public:
+    using Handler = std::function<Response(std::string body)>;
+    BufferedExchange(const Request &request, std::size_t limit, Handler handler);
+    void on_data(std::string_view chunk) override;
+    Response on_end() override;
+
+private:
+    Request request_; // path and request ID, for the error response
+    std::size_t limit_;
+    Handler handler_;
+    std::string body_;
+    bool too_long_ = false;
 };
 
 } // namespace micros3::http

@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
                   << scan.orphan_blobs_removed << " unreferenced blob(s)" << std::endl;
     }
 
-    micros3::S3Service service({cfg.access_key_id, cfg.secret_access_key});
+    micros3::S3Service service(*store, {cfg.access_key_id, cfg.secret_access_key});
     micros3::Server server(service);
     const bool listening = server.run(cfg.port, [&cfg](int port) {
         if (port != 0) {

@@ -5,11 +5,11 @@ It is meant to implement these operations with basic support:
 ## Operations
 
 - Bucket:
-  - [ ] ListBuckets
-  - [ ] CreateBucket
-  - [ ] HeadBucket
-  - [ ] DeleteBucket
-  - [ ] GetBucketLocation
+  - [x] ListBuckets
+  - [x] CreateBucket
+  - [x] HeadBucket
+  - [x] DeleteBucket
+  - [x] GetBucketLocation
 - Objects:
   - [ ] PutObject
   - [ ] GetObject

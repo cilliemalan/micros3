@@ -72,4 +72,26 @@ Response error_response(const S3Error &error, const Request &request) {
     return response;
 }
 
+BufferedExchange::BufferedExchange(const Request &request, std::size_t limit, Handler handler)
+    : limit_(limit), handler_(std::move(handler)) {
+    request_.method = request.method;
+    request_.path = request.path;
+    request_.request_id = request.request_id;
+}
+
+void BufferedExchange::on_data(std::string_view chunk) {
+    if (too_long_) return;
+    if (chunk.size() > limit_ - body_.size()) {
+        too_long_ = true;
+        body_.clear();
+        return;
+    }
+    body_.append(chunk);
+}
+
+Response BufferedExchange::on_end() {
+    if (too_long_) return error_response(max_message_length_exceeded(), request_);
+    return handler_(std::move(body_));
+}
+
 } // namespace micros3::http
