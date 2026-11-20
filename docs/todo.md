@@ -42,8 +42,8 @@ All are recorded in design.md. Nothing here is open.
 - [x] SigV4 header authentication, as design.md's "Authentication" section describes: canonical request, string to sign, derived signing key, constant-time comparison, and the access key ID check. Use AWS's published test vectors. (`lib/sigv4.cpp`, called from `S3Service::begin` after routing. The canonical URI and query are rebuilt from the decoded target. Any region in the credential scope is accepted, and clock skew is not checked. `STREAMING-*` payloads answer 501. Tests in `test/sigv4_test.cpp` and `test/server_test.cpp`.)
 - [x] Payload hash check: `x-amz-content-sha256` against the SHA-256 of the streamed body. A mismatch returns `XAmzContentSHA256Mismatch` (400) and deletes the staging file. (`PayloadHashExchange` wraps the handler's exchange and calls its `on_abort` on a mismatch, so each handler must discard its staging file in `on_abort`.)
 - [x] Preflight OPTIONS is accepted without a signature. Its full handling is in Phase 10.
-- [ ] Dockerfile (D4, D8): an Alpine builder stage, then `FROM scratch` with the binary, `ENV MICROS3_DATA_DIR=/data MICROS3_PORT=3923`, `VOLUME /data`, `EXPOSE 3923`, `USER 65532:65532`, and an entrypoint of the binary. The builder creates `/data` owned by `65532:65532`. Add `.dockerignore` for `ooo/`, `verify/node_modules` and `.git`.
-- [ ] Static link under CMake (`-static`, musl on the builder), excluded on Windows.
+- [x] Dockerfile (D4, D8): an Alpine builder stage, then `FROM scratch` with the binary, `ENV MICROS3_DATA_DIR=/data MICROS3_PORT=3923`, `VOLUME /data`, `EXPOSE 3923`, `USER 65532:65532`, and an entrypoint of the binary. The builder creates `/data` owned by `65532:65532`. Add `.dockerignore` for `ooo/`, `verify/node_modules` and `.git`. (The builder is `alpine:3.22` and builds only the `micros3` target, then strips it. `test/docker-check.sh` checks the image.)
+- [x] Static link under CMake (`-static`, musl on the builder), excluded on Windows. (`MICROS3_STATIC` option in `src/CMakeLists.txt`, on by default except on Windows and macOS. It applies to the `micros3` executable only. On a glibc host the link warns about `getaddrinfo`, which is harmless here.)
 
 **Done when:** the first `verify` call, ListBuckets, returns an empty list. `ldd` or `file` reports the binary as static, and `docker run --rm --entrypoint /bin/sh micros3` fails.
 
@@ -162,8 +162,8 @@ All are recorded in design.md. Nothing here is open.
 - [x] MD5, SHA-256, CRC32 and base64 results checked against known vectors, to confirm the wiring to the libraries. (`test/digest_test.cpp`, which also checks HMAC-SHA256 against RFC 4231.)
 - [ ] Persistence script (`test/persistence.sh`): create a bucket and an object, stop, restart on the same data directory, read the object back.
 - [ ] Crash-safety script (`test/crash.sh`): start a large PutObject with `curl --limit-rate` so it runs for a while, send SIGKILL mid-upload, restart. The object must be absent or complete, and `staging/` must be empty.
-- [ ] Static-link check: `file` and `ldd` on the release binary.
-- [ ] Docker check: the image has no shell, and it runs as `65532:65532`.
+- [x] Static-link check: `file` and `ldd` on the release binary. (`test/static-check.sh [binary]`.)
+- [x] Docker check: the image has no shell, and it runs as `65532:65532`. (`test/docker-check.sh [image]`, which also sends a signed request with `curl --aws-sigv4` and confirms the container keeps running with `/data` writable.)
 
 ## Verifier changes
 
