@@ -1,6 +1,12 @@
 add_library(libmicros3 STATIC
     config.cpp
     digest.cpp
+    http.cpp
+    router.cpp
+    server.cpp
+    service.cpp
+    url.cpp
+    xml.cpp
 )
 set_target_properties(libmicros3 PROPERTIES OUTPUT_NAME micros3)
 target_include_directories(libmicros3 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
@@ -10,6 +16,7 @@ target_link_libraries(libmicros3
         nlohmann_json::nlohmann_json
         pugixml::pugixml
     PRIVATE
+        uwebsockets
         mbedcrypto
         zlibstatic
 )

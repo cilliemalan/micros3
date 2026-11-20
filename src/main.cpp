@@ -1,6 +1,7 @@
 #include "micros3/config.h"
 
-#include <App.h>
+#include "micros3/server.h"
+#include "micros3/service.h"
 
 #include <iostream>
 #include <string>
@@ -21,23 +22,14 @@ int main(int argc, char **argv) {
     }
     const config::Config cfg = std::get<config::Config>(parsed);
 
-    bool listening = false;
-    uWS::App()
-        .any("/*", [](auto *response, auto *) {
-            // Routing and S3 operations are not implemented yet.
-            response->writeStatus("501 Not Implemented")
-                ->writeHeader("Content-Type", "text/plain; charset=utf-8")
-                ->end("Not implemented\n");
-        })
-        .listen(cfg.port, [&listening, &cfg](auto *socket) {
-            listening = socket != nullptr;
-            if (listening) {
-                std::cout << "Listening on port " << cfg.port << " with data directory "
-                          << cfg.data_dir << std::endl;
-            } else {
-                std::cerr << "Failed to listen on port " << cfg.port << std::endl;
-            }
-        })
-        .run();
+    micros3::S3Service service;
+    micros3::Server server(service);
+    const bool listening = server.run(cfg.port, [&cfg](int port) {
+        if (port != 0) {
+            std::cout << "Listening on port " << port << " with data directory " << cfg.data_dir << std::endl;
+        } else {
+            std::cerr << "Failed to listen on port " << cfg.port << std::endl;
+        }
+    });
     return listening ? 0 : 1;
 }

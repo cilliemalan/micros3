@@ -33,10 +33,10 @@ All are recorded in design.md. Nothing here is open.
 - [x] Keep `libmicros3` for the server code, and drop `lib/hello.*` once the server stops using it.
 - [x] Credentials from `MICROS3_ACCESS_KEY_ID` and `MICROS3_SECRET_ACCESS_KEY` only (defaults `test`/`test`), with no flags.
 - [x] Options: `--data-dir` and `--port`, with environment variables `MICROS3_DATA_DIR` (default `./data`) and `MICROS3_PORT` (default 3923). Flags beat environment variables, which beat defaults. Reject an invalid port with a usage error and a non-zero exit.
-- [ ] HTTP server on the configured port, streaming request bodies.
-- [ ] Path-style router. It splits the path into bucket, key and query. It selects the operation from method and subresource (`?uploads`, `?uploadId=`, `?cors`, `?encryption`, `?location`, `?list-type=2`).
-- [ ] Unsupported subresources and out-of-scope operations (`?tagging`, `?acl`, `?policy`, `?versioning`, and so on) return `NotImplemented` (501). They never fall through to an object operation.
-- [ ] XML writer for success bodies and for errors (`Code`, `Message`, `Resource`, `RequestId`). Set the `x-amz-request-id` header to the same value.
+- [x] HTTP server on the configured port, streaming request bodies. (`lib/server.cpp` adapts uWebSockets to `http::Service`/`http::Exchange`. Every operation still answers 501 until its handler lands. Note: uWebSockets rejects a `Content-Length` above 999,999,999 bytes with 400, and its request head limit is 4 KiB unless `UWS_HTTP_MAX_HEADERS_SIZE` is set in the environment.)
+- [x] Path-style router. It splits the path into bucket, key and query. It selects the operation from method and subresource (`?uploads`, `?uploadId=`, `?cors`, `?encryption`, `?location`, `?list-type=2`).
+- [x] Unsupported subresources and out-of-scope operations (`?tagging`, `?acl`, `?policy`, `?versioning`, and so on) return `NotImplemented` (501). They never fall through to an object operation.
+- [x] XML writer for success bodies and for errors (`Code`, `Message`, `Resource`, `RequestId`). Set the `x-amz-request-id` header to the same value.
 - [ ] SQLite in WAL mode, with `synchronous=FULL` for commits and `PRAGMA foreign_keys=ON` on every connection. Create the four tables in the design (`buckets`, `objects`, `uploads`, `parts`) if missing. `uploads.bucket` is `ON DELETE CASCADE` (D1).
 - [ ] Startup: create `blobs/` and `staging/`. Delete every file in `staging/`, and every file in `blobs/` that no row refers to.
 - [ ] SigV4 header authentication, as design.md's "Authentication" section describes: canonical request, string to sign, derived signing key, constant-time comparison, and the access key ID check. Use AWS's published test vectors.
