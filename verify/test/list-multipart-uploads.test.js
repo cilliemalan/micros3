@@ -69,7 +69,8 @@ class FakeS3 {
         ...(EncodingType ? { EncodingType } : {}),
         Uploads: selected.filter(e => e.upload).map(e => ({ ...e.upload, Key: encode(e.key) })),
         CommonPrefixes: selected.filter(e => e.prefix).map(e => ({ Prefix: encode(e.prefix) })),
-        ...(truncated ? { NextKeyMarker: encode(last.key), NextUploadIdMarker: last.upload?.UploadId } : {}),
+        // As AWS does, a page ending in a rolled-up prefix has empty next markers.
+        ...(truncated ? { NextKeyMarker: last.upload ? encode(last.key) : '', NextUploadIdMarker: last.upload?.UploadId ?? '' } : {}),
       });
     }
     if (command instanceof AbortMultipartUploadCommand || command instanceof UploadPartCommand || command instanceof CompleteMultipartUploadCommand) {
@@ -117,7 +118,7 @@ test('ListMultipartUploads accepts S3-style form encoding of listed values', asy
 });
 
 test('ListMultipartUploads detects broken responses, filtering, pagination and lifecycle', async () => {
-  const modes = ['status', 'bucket', 'truncation', 'empty', 'object listed', 'missing upload', 'duplicate upload', 'order', 'timestamp', 'initiation order', 'storage', 'prefix', 'marker', 'delimiter', 'encoded', 'encoded prefix', 'unencoded key', 'next key', 'next id', 'page duplicate', 'prefix page', 'grouped prefix', 'other bucket', 'aborted', 'completed', 'missing bucket', 'missing code'];
+  const modes = ['status', 'bucket', 'truncation', 'empty', 'object listed', 'missing upload', 'duplicate upload', 'order', 'timestamp', 'initiation order', 'storage', 'prefix', 'marker', 'delimiter', 'encoded', 'encoded prefix', 'unencoded key', 'next key', 'next id', 'grouped next key', 'page duplicate', 'prefix page', 'grouped prefix', 'other bucket', 'aborted', 'completed', 'missing bucket', 'missing code'];
   for (const mode of modes) {
     let changed = false;
     const client = new FakeS3(async (command, service, next) => {
@@ -154,6 +155,7 @@ test('ListMultipartUploads detects broken responses, filtering, pagination and l
         else if (mode === 'page duplicate' && MaxUploads === 1 && KeyMarker && !Delimiter) result.Uploads[0].UploadId = 'wrong';
         else if (mode === 'prefix page' && Prefix === 'alpha/' && MaxUploads === 2 && KeyMarker) result.Uploads = [];
         else if (mode === 'grouped prefix' && Delimiter && MaxUploads === 1 && result.CommonPrefixes.length) result.CommonPrefixes = [];
+        else if (mode === 'grouped next key' && Delimiter && MaxUploads === 1 && result.IsTruncated && result.Uploads.length) delete result.NextKeyMarker;
         else if (mode === 'other bucket' && count === 1) result.Uploads = [];
         else if ((mode === 'aborted' || mode === 'completed') && count === 4 && !Prefix && !MaxUploads) result.Uploads.push({ Key: mode === 'aborted' ? 'alpha/one' : 'alpha/two', UploadId: mode === 'aborted' ? 'id-003' : 'id-004', Initiated: new Date(), StorageClass: 'STANDARD' });
         else return false;

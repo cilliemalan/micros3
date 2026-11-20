@@ -120,8 +120,15 @@ export async function verifyListMultipartUploads(client) {
         assert.deepEqual((result.CommonPrefixes ?? []).map(p => p.Prefix), typeof group === 'string' ? [group] : [], 'grouped page prefixes');
         assert.equal(result.IsTruncated, i < grouped.length - 1, 'grouped page truncation');
         if (result.IsTruncated) {
-          assert.ok(typeof result.NextKeyMarker === 'string' && result.NextKeyMarker, 'grouped next key marker');
-          markers = { KeyMarker: result.NextKeyMarker };
+          // AWS leaves NextKeyMarker empty when a truncated page ends with a rolled-up
+          // prefix; the prefix then serves as the key marker. Any other page must name its
+          // last upload as the marker.
+          const { NextKeyMarker, Uploads = [], CommonPrefixes = [] } = result;
+          const last = [...Uploads.map(upload => upload.Key), ...CommonPrefixes.map(p => p.Prefix)].at(-1);
+          const marker = NextKeyMarker || (Uploads.length === 0 ? CommonPrefixes.at(-1)?.Prefix : undefined);
+          assert.ok(typeof marker === 'string' && marker, 'grouped next key marker');
+          assert.equal(marker, last, 'grouped next key marker names the last listed entry');
+          markers = { KeyMarker: marker };
           if (result.NextUploadIdMarker) markers.UploadIdMarker = result.NextUploadIdMarker;
         }
       }
