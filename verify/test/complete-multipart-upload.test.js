@@ -92,8 +92,23 @@ test('CompleteMultipartUpload accepts NoSuchUpload for an upload in a missing bu
   assert.equal(client.buckets.size, 0);
 });
 
+test('CompleteMultipartUpload accepts an idempotent repeated completion', async () => {
+  // AWS repeats the original result (200, same ETag) for a repeated completion.
+  const completed = new Set();
+  const client = new FakeS3(async (command, service, next) => {
+    if (!(command instanceof CompleteMultipartUploadCommand) || !service.buckets.has(command.input.Bucket)) return next();
+    const id = JSON.stringify([command.input.Key, command.input.UploadId]);
+    if (completed.has(id)) return ok(200, { Bucket: command.input.Bucket, Key: command.input.Key, ETag: '"multipart-etag"' });
+    const result = await next();
+    completed.add(id);
+    return result;
+  });
+  await run({ client });
+  assert.equal(client.buckets.size, 0);
+});
+
 test('CompleteMultipartUpload detects incorrect validation, state, response and content', async () => {
-  for (const mode of ['order', 'bad etag', 'missing part', 'small part', 'error code', 'error status', 'wrong key', 'wrong bucket', 'cross bucket content', 'missing upload', 'aborted', 'old object', 'neighbor object', 'parts', 'truncation', 'status', 'bucket', 'key', 'etag', 'body', 'length', 'object etag', 'type', 'cache', 'metadata', 'completed', 'completed parts', 'survivor', 'recovery', 'empty', 'missing bucket', 'missing code']) {
+  for (const mode of ['order', 'bad etag', 'missing part', 'small part', 'error code', 'error status', 'wrong key', 'wrong bucket', 'cross bucket content', 'missing upload', 'aborted', 'old object', 'neighbor object', 'parts', 'truncation', 'status', 'bucket', 'key', 'etag', 'body', 'length', 'object etag', 'type', 'cache', 'metadata', 'completed', 'completed code', 'completed parts', 'survivor', 'recovery', 'empty', 'missing bucket', 'missing code']) {
     let gets = 0;
     const client = new FakeS3(async (command, service, next) => {
       if (command instanceof CompleteMultipartUploadCommand) {
@@ -115,7 +130,11 @@ test('CompleteMultipartUpload detects incorrect validation, state, response and 
         if (UploadId === 'upload-1' && !service.buckets.get(Bucket).uploads.has(UploadId) && [...service.buckets.values()].some(b => b.uploads.has(UploadId)) && mode === 'wrong bucket') return ok(200);
         if (UploadId === 'nonexistent-upload-id' && mode === 'missing upload') return ok(200);
         if (UploadId === 'upload-4' && mode === 'aborted') return ok(200);
-        if (UploadId === 'upload-1' && !service.buckets.get(Bucket).uploads.has(UploadId) && mode === 'completed') return ok(200);
+        if (UploadId === 'upload-1' && !service.buckets.get(Bucket).uploads.has(UploadId) && mode === 'completed') {
+          service.buckets.get(Bucket).objects.set(Key, { body: Buffer.from('repeated') });
+          return ok(200, { Bucket, Key, ETag: '"multipart-etag"' });
+        }
+        if (UploadId === 'upload-1' && !service.buckets.get(Bucket).uploads.has(UploadId) && mode === 'completed code') throw error('InvalidPart', 400);
         const result = await next();
         if (UploadId === 'upload-1') {
           if (mode === 'status') result.$metadata.httpStatusCode = 201;

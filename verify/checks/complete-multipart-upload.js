@@ -5,7 +5,9 @@ import {
 } from '@aws-sdk/client-s3';
 import { assertPartsMissing, listParts } from './list-parts.js';
 import { withUploadCleanup } from './multipart-cleanup.js';
-import { MISSING_BUCKET_UPLOAD_CODES, assertMissing, assertS3Error, assertStatus, withBucket } from './resources.js';
+import {
+  MISSING_BUCKET_UPLOAD_CODES, assertMissing, assertS3Error, assertStatus, embeddedError, recordRawStatus, status, withBucket,
+} from './resources.js';
 
 export async function verifyCompleteMultipartUpload(client) {
   await withBucket(client, async ({ Bucket, retainForUploads }) => {
@@ -92,7 +94,25 @@ export async function verifyCompleteMultipartUpload(client) {
       assert.equal(object.ContentType, 'application/octet-stream', 'initiation ContentType');
       assert.equal(object.CacheControl, 'max-age=123', 'initiation CacheControl');
       assert.deepEqual(object.Metadata, { purpose: 'complete' }, 'initiation metadata');
-      await reject(Key, id, [p1, p3], 404, 'NoSuchUpload', 'CompleteMultipartUpload completed upload');
+      // A repeated completion is idempotent on AWS (it repeats the original result); other
+      // implementations may reject it as NoSuchUpload. Either way the object must not change.
+      const repeated = command(Key, id, [p1, p3]);
+      recordRawStatus(repeated);
+      let repeatedResult;
+      try {
+        repeatedResult = await client.send(repeated);
+      } catch (error) {
+        if (!embeddedError(repeated, error)) assert.equal(status(error), 404, 'CompleteMultipartUpload completed upload HTTP status');
+        assert.equal(error.name, 'NoSuchUpload', 'CompleteMultipartUpload completed upload error code');
+      }
+      if (repeatedResult) {
+        assertStatus(repeatedResult, 200, 'CompleteMultipartUpload repeated completion HTTP status');
+        assert.equal(repeatedResult.ETag, result.ETag, 'repeated completion ETag');
+      }
+      const afterRepeat = await client.send(new GetObjectCommand({ Bucket, Key }));
+      assertStatus(afterRepeat, 200, 'GetObject after repeated completion');
+      assert.equal(afterRepeat.ETag, object.ETag, 'repeated completion leaves the object ETag');
+      assert.ok(Buffer.from(await afterRepeat.Body.transformToByteArray()).equals(Buffer.concat([first, last])), 'repeated completion leaves the object content');
       await assertPartsMissing(client, { Bucket, Key, UploadId: id }, 'completed upload');
       const survivor = await complete(Key, other, [otherPart]);
       assertStatus(survivor, 200, 'CompleteMultipartUpload independent upload');
