@@ -162,10 +162,11 @@ test('cleanup attempts every known abort and object deletion when listing and ab
     return next();
   });
   await assert.rejects(run({ client }), error => {
-    assert.match(error.message, /check failed.*listing failed.*abort failed upload-1.*abort failed upload-2.*abort failed upload-3/s);
+    assert.match(error.message, /check failed.*listing failed.*abort failed upload-1.*abort failed upload-2.*abort failed upload-3.*retained/s);
     return true;
   });
   assert.equal(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).length, 3);
   assert.equal(client.calls.filter(c => c instanceof DeleteObjectCommand).length, 2);
-  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 1);
+  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 0);
+  assert.equal(client.buckets.size, 1);
 });

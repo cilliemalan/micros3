@@ -7,9 +7,9 @@ import { assertMissing, assertStatus, withBucket } from './resources.js';
 import { withUploadCleanup } from './multipart-cleanup.js';
 
 export async function verifyListMultipartUploads(client) {
-  await withBucket(client, async ({ Bucket }) => {
+  await withBucket(client, async ({ Bucket, retainForUploads }) => {
     const keys = ['alpha/one', 'alpha/sub/a', 'alpha/sub/b', 'alpha/two', 'special/雪 +&%.txt'];
-    await withUploadCleanup(client, Bucket, keys, async known => {
+    await withUploadCleanup(client, Bucket, keys, retainForUploads, async known => {
       const list = async (input = {}) => {
         const result = await client.send(new ListMultipartUploadsCommand({ Bucket, ...input }));
         assertStatus(result, 200, 'ListMultipartUploads');
@@ -123,8 +123,8 @@ export async function verifyListMultipartUploads(client) {
         }
       }
       // Listing must not expose another bucket's uploads, even for the same key.
-      await withBucket(client, async ({ Bucket: other }) => {
-        await withUploadCleanup(client, other, [keys[0]], async otherKnown => {
+      await withBucket(client, async ({ Bucket: other, retainForUploads: retainOtherUploads }) => {
+        await withUploadCleanup(client, other, [keys[0]], retainOtherUploads, async otherKnown => {
           const result = await client.send(new CreateMultipartUploadCommand({ Bucket: other, Key: keys[0] }));
           if (typeof result.UploadId === 'string' && result.UploadId) otherKnown.push({ Key: keys[0], UploadId: result.UploadId });
           assertStatus(result, 200, 'other bucket upload');

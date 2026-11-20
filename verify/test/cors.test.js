@@ -343,6 +343,17 @@ test('CORS checks clean up even when a write succeeds but its response is lost',
   }
 });
 
+test('CORS cleanup reports an invalid delete status and still removes the bucket', async () => {
+  const client = new FakeS3({ async intercept(command, service, next) {
+    const response = await next();
+    if (command instanceof DeleteBucketCorsCommand) response.$metadata.httpStatusCode = 200;
+    return response;
+  } });
+  await assert.rejects(check('PutBucketCors')({ client }), /cleanup DeleteBucketCors HTTP status/);
+  assert.equal(client.buckets.size, 0);
+  assert.ok(client.calls.some(command => command instanceof DeleteBucketCommand));
+});
+
 test('cleanup reports CORS and bucket failures without hiding the original error', async () => {
   const client = new FakeS3({ intercept(command, service, next) {
     if (command instanceof GetBucketCorsCommand) throw new Error('get failed');

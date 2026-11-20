@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { DeleteBucketCommand, DeleteBucketCorsCommand, GetBucketCorsCommand, PutBucketCorsCommand } from '@aws-sdk/client-s3';
-import { assertMissing, assertStatus, ignoreMissing, status, withBucket, withCleanup } from './resources.js';
+import { assertMissing, assertStatus, cleanupDelete, status, withBucket, withCleanup } from './resources.js';
 
 const rules = [
   {
@@ -33,9 +33,8 @@ const invalidConfigurations = [
 
 async function withCorsCleanup(client, Bucket, run) {
   // Even a failed PUT can have stored a configuration before its response was lost.
-  return withCleanup(run, () => ignoreMissing(
-    () => client.send(new DeleteBucketCorsCommand({ Bucket })), ['NoSuchBucket'],
-  ), `CORS configuration in bucket ${Bucket}`);
+  return withCleanup(run, () => cleanupDelete(client, new DeleteBucketCorsCommand({ Bucket })),
+    `CORS configuration in bucket ${Bucket}`);
 }
 
 async function withMissingBucket(client, run) {

@@ -12,8 +12,8 @@ import {
 } from '@aws-sdk/client-s3';
 
 import {
-  assertMissing, assertStatus, bucketName, createInput, creationRejected,
-  ignoreMissing, message, status, withBucket, withCleanup,
+  assertMissing, assertStatus, bucketName, cleanupDelete, createInput, creationRejected,
+  message, status, withBucket, withCleanup,
 } from './resources.js';
 
 function locationRegion(location) {
@@ -58,7 +58,7 @@ export default [
       assert.equal(status(rejection), 400, 'Invalid bucket name should return HTTP 400');
       assert.equal(rejection.name, 'InvalidBucketName', 'CreateBucket error code');
     }, async () => {
-      if (mayExist) await ignoreMissing(() => client.send(new DeleteBucketCommand({ Bucket })));
+      if (mayExist) await cleanupDelete(client, new DeleteBucketCommand({ Bucket }));
     }, `bucket ${Bucket}`);
   } },
   { name: 'CreateBucket preserves an existing bucket on repeat creation', async run({ client }) {
@@ -80,7 +80,7 @@ export default [
         const object = await client.send(new GetObjectCommand({ Bucket, Key }));
         assertStatus(object, 200, 'GetObject after repeat create');
         assert.equal(await object.Body.transformToString(), content, 'Object content after repeat create');
-      }, () => ignoreMissing(() => client.send(new DeleteObjectCommand({ Bucket, Key })), ['NoSuchBucket', 'NoSuchKey']), `object ${Bucket}/${Key}`);
+      }, () => cleanupDelete(client, new DeleteObjectCommand({ Bucket, Key }), ['NoSuchBucket', 'NoSuchKey']), `object ${Bucket}/${Key}`);
     });
   } },
   { name: 'ListBuckets', async run({ client }) {
@@ -148,7 +148,7 @@ export default [
         const object = await client.send(new GetObjectCommand({ Bucket, Key }));
         assertStatus(object, 200, 'GetObject after rejected delete');
         assert.equal(await object.Body.transformToString(), content, 'Object content after rejected delete');
-      }, () => ignoreMissing(() => client.send(new DeleteObjectCommand({ Bucket, Key })), ['NoSuchBucket', 'NoSuchKey']), `object ${Bucket}/${Key}`);
+      }, () => cleanupDelete(client, new DeleteObjectCommand({ Bucket, Key }), ['NoSuchBucket', 'NoSuchKey']), `object ${Bucket}/${Key}`);
     });
   } },
 ];

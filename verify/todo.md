@@ -13,8 +13,9 @@ CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload
 
 - [x] Configure the S3 client from the supplied environment variables and connect
       to the configured S3-compatible endpoint.
-- [ ] Use isolated bucket and object names, report individual failures, and clean
-      up created objects, uploads, CORS configuration, and buckets even on failure.
+- [x] Use isolated bucket and object names, report individual failures, and attempt
+      cleanup even on failure. Retain a bucket for manual cleanup if multipart
+      uploads may remain or their removal cannot be verified.
 
 ## Bucket operations
 

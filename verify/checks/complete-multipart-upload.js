@@ -7,11 +7,11 @@ import { withUploadCleanup } from './multipart-cleanup.js';
 import { assertMissing, assertStatus, withBucket } from './resources.js';
 
 export async function verifyCompleteMultipartUpload(client) {
-  await withBucket(client, async ({ Bucket }) => {
+  await withBucket(client, async ({ Bucket, retainForUploads }) => {
     const Key = 'nested/雪 +&%?#.bin';
     const neighbor = `${Key}/child`;
     const emptyKey = 'empty';
-    await withUploadCleanup(client, Bucket, [Key, neighbor, emptyKey], async known => {
+    await withUploadCleanup(client, Bucket, [Key, neighbor, emptyKey], retainForUploads, async known => {
       const original = Buffer.from('original object');
       assertStatus(await client.send(new PutObjectCommand({ Bucket, Key, Body: original })), 200, 'PutObject setup');
       const create = async (key, extra = {}) => {
@@ -63,8 +63,8 @@ export async function verifyCompleteMultipartUpload(client) {
       assertStatus(parts, 200, 'ListParts after failed completions');
       assert.equal(parts.IsTruncated, false, 'all parts fit in one page');
       assert.deepEqual((parts.Parts ?? []).map(({ PartNumber, ETag }) => ({ PartNumber, ETag })), [p1, p2, p3], 'failed completions preserve parts');
-      await withBucket(client, async ({ Bucket: otherBucket }) => {
-        await withUploadCleanup(client, otherBucket, [Key], async otherKnown => {
+      await withBucket(client, async ({ Bucket: otherBucket, retainForUploads: retainOtherUploads }) => {
+        await withUploadCleanup(client, otherBucket, [Key], retainOtherUploads, async otherKnown => {
           const created = await client.send(new CreateMultipartUploadCommand({ Bucket: otherBucket, Key }));
           if (typeof created.UploadId === 'string' && created.UploadId) otherKnown.push({ Key, UploadId: created.UploadId });
           assertStatus(created, 200, 'CreateMultipartUpload other bucket');
@@ -114,8 +114,8 @@ export async function verifyCompleteMultipartUpload(client) {
       assert.equal((await empty.Body.transformToByteArray()).length, 0, 'empty object content');
     });
   });
-  await withBucket(client, async ({ Bucket }) => {
-    await withUploadCleanup(client, Bucket, ['missing'], async () => {
+  await withBucket(client, async ({ Bucket, retainForUploads }) => {
+    await withUploadCleanup(client, Bucket, ['missing'], retainForUploads, async () => {
       assertStatus(await client.send(new DeleteBucketCommand({ Bucket })), 204, 'DeleteBucket setup');
       await assertMissing(() => client.send(new CompleteMultipartUploadCommand({ Bucket, Key: 'missing', UploadId: 'missing', MultipartUpload: { Parts: [{ PartNumber: 1, ETag: '"missing"' }] } })), 'CompleteMultipartUpload missing bucket', 'NoSuchBucket');
     });

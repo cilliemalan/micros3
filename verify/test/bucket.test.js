@@ -362,6 +362,45 @@ test('object and bucket cleanup failures include both resource names and the ori
   });
 });
 
+test('bucket cleanup detects a successful delete response that left the bucket behind', async () => {
+  const client = new FakeS3({ intercept(command, service, next) {
+    if (command instanceof DeleteBucketCommand) return ok(204);
+    return next();
+  } });
+  await assert.rejects(check('CreateBucket')({ client }), /cleanup failed for bucket .*HeadBucket after cleanup/i);
+  assert.equal(client.buckets.size, 1);
+});
+
+test('an unverifiable bucket deletion reports both the check and cleanup failures', async () => {
+  const client = new FakeS3({ intercept(command, service, next) {
+    if (command instanceof HeadBucketCommand) {
+      if (service.buckets.has(command.input.Bucket)) throw new Error('check failed');
+      throw s3Error('AccessDenied', 403);
+    }
+    return next();
+  } });
+  await assert.rejects(check('CreateBucket')({ client }), err => {
+    assert.match(err.message, /check failed/);
+    assert.match(err.message, /cleanup failed for bucket .*HeadBucket after cleanup.*HTTP 404/is);
+    return true;
+  });
+  assert.equal(client.buckets.size, 0);
+});
+
+test('cleanup reports incorrect delete statuses even when the resources were removed', async () => {
+  for (const Command of [DeleteObjectCommand, DeleteBucketCommand]) {
+    const client = new FakeS3({ async intercept(command, service, next) {
+      const response = await next();
+      if (command instanceof Command) response.$metadata.httpStatusCode = 200;
+      return response;
+    } });
+    await assert.rejects(check('CreateBucket preserves an existing bucket on repeat creation')({ client }),
+      new RegExp(`cleanup.*${Command.name.replace('Command', '')} HTTP status`, 'i'));
+    assert.equal(client.buckets.size, 0);
+    assert.ok(callsOf(client, DeleteBucketCommand).length > 0);
+  }
+});
+
 test('a wrong 404 error during bucket cleanup is not silently ignored', async () => {
   const client = new FakeS3({ intercept(command, service, next) {
     if (command instanceof DeleteBucketCommand) throw s3Error('NoSuchKey', 404);

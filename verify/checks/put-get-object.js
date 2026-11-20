@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { DeleteBucketCommand, DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { assertMissing, assertStatus, ignoreMissing, message, status, withBucket, withCleanup } from './resources.js';
+import { assertMissing, assertStatus, cleanupDelete, message, status, withBucket, withCleanup } from './resources.js';
 
 async function cleanObjects(client, Bucket, keys) {
   const failures = [];
   for (const Key of keys) {
     try {
-      await ignoreMissing(() => client.send(new DeleteObjectCommand({ Bucket, Key })), ['NoSuchBucket', 'NoSuchKey']);
+      await cleanupDelete(client, new DeleteObjectCommand({ Bucket, Key }), ['NoSuchBucket', 'NoSuchKey']);
     } catch (error) {
       failures.push(new Error(`${Bucket}/${Key}: ${message(error)}`, { cause: error }));
     }

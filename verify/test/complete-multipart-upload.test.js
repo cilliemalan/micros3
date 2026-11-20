@@ -192,8 +192,9 @@ test('cleanup reports failures and attempts all known resources', async () => {
     if (command instanceof AbortMultipartUploadCommand) throw new Error(`abort failed ${command.input.UploadId}`);
     return next();
   });
-  await assert.rejects(run({ client }), /setup failed.*listing failed.*abort failed upload-1.*abort failed upload-2.*abort failed upload-3.*abort failed upload-4/s);
+  await assert.rejects(run({ client }), /setup failed.*listing failed.*abort failed upload-1.*abort failed upload-2.*abort failed upload-3.*abort failed upload-4.*retained/s);
   assert.equal(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).length, 4);
   assert.equal(client.calls.filter(c => c instanceof DeleteObjectCommand).length, 3);
-  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 1);
+  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 0);
+  assert.equal(client.buckets.size, 1);
 });

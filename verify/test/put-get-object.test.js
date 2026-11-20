@@ -228,6 +228,18 @@ test('checks do not delete rejected bucket creations and clean up a recreated mi
   }
 });
 
+test('object cleanup reports invalid delete statuses and continues removing the remaining objects', async () => {
+  const client = new FakeS3(async (command, service, next) => {
+    const response = await next();
+    if (command instanceof DeleteObjectCommand && command.input.Key.endsWith('.bin')) response.$metadata.httpStatusCode = 200;
+    return response;
+  });
+  await assert.rejects(run('PutObject')({ client }), /cleanup DeleteObject HTTP status/);
+  assert.equal(client.buckets.size, 0);
+  assert.ok(client.calls.some(c => c instanceof DeleteObjectCommand && c.input.Key === 'empty'));
+  assert.ok(client.calls.some(c => c instanceof DeleteBucketCommand));
+});
+
 test('ambiguous writes and cleanup failures are handled without losing the original error', async () => {
   for (const name of ['PutObject', 'GetObject']) {
     const client = new FakeS3(async (command, service, next) => {

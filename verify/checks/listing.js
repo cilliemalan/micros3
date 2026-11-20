@@ -6,7 +6,7 @@ import {
   PutObjectCommand,
 } from '@aws-sdk/client-s3';
 import {
-  assertMissing, assertStatus, bucketName, ignoreMissing, message, withBucket, withCleanup,
+  assertMissing, assertStatus, bucketName, cleanupDelete, message, withBucket, withCleanup,
 } from './resources.js';
 
 // Deliberately upload out of order, with nested and empty objects.
@@ -46,7 +46,7 @@ async function withObjects(client, Bucket, run) {
     const failures = [];
     for (const Key of attempted) {
       try {
-        await ignoreMissing(() => client.send(new DeleteObjectCommand({ Bucket, Key })), ['NoSuchBucket', 'NoSuchKey']);
+        await cleanupDelete(client, new DeleteObjectCommand({ Bucket, Key }), ['NoSuchBucket', 'NoSuchKey']);
       } catch (error) {
         failures.push(new Error(`${Bucket}/${Key}: ${message(error)}`, { cause: error }));
       }

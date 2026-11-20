@@ -171,10 +171,12 @@ test('cleanup preserves failures, attempts known aborts, and never deletes rejec
     assert.match(err.message, /create failed/);
     assert.match(err.message, /listing failed/);
     assert.match(err.message, /abort failed/);
+    assert.match(err.message, /bucket .*retained.*upload/i);
     return true;
   });
   assert.equal(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).length, 1);
   assert.equal(client.calls.filter(c => c instanceof DeleteObjectCommand).length, 5);
+  assert.equal(client.buckets.size, 1);
   const rejected = new FakeS3(command => {
     if (command instanceof CreateBucketCommand) throw error('BucketAlreadyExists', 409);
     throw new Error('unexpected cleanup');

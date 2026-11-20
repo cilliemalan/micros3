@@ -168,15 +168,37 @@ test('UploadPart preserves rejected bucket creations and cleans a recreated miss
   assert.equal(recreated.buckets.size, 0);
 });
 
-test('UploadPart reports cleanup failures and still attempts cleanup of every resource', async () => {
+test('a nested upload cleanup failure retains only the affected bucket', async () => {
+  const created = [];
+  const client = new FakeS3((command, service, next) => {
+    if (command instanceof CreateBucketCommand) created.push(command.input.Bucket);
+    if (command instanceof AbortMultipartUploadCommand && command.input.Bucket === created[1]) {
+      throw new Error('other bucket abort failed');
+    }
+    return next();
+  });
+  await assert.rejects(run({ client }), err => {
+    assert.match(err.message, /other bucket abort failed/);
+    assert.ok(err.message.includes(`bucket ${created[1]} retained`));
+    return true;
+  });
+  assert.equal(created.length, 2);
+  assert.deepEqual([...client.buckets.keys()], [created[1]]);
+  assert.equal(client.buckets.get(created[1]).uploads.size, 1);
+  assert.ok(client.calls.some(c => c instanceof DeleteBucketCommand && c.input.Bucket === created[0]));
+  assert.ok(!client.calls.some(c => c instanceof DeleteBucketCommand && c.input.Bucket === created[1]));
+});
+
+test('UploadPart reports cleanup failures, attempts every abort and object deletion, and retains the bucket', async () => {
   const client = new FakeS3(async (command, service, next) => {
     if (command instanceof UploadPartCommand) throw new Error('upload failed');
     if (command instanceof ListMultipartUploadsCommand) throw new Error('listing failed');
     if (command instanceof AbortMultipartUploadCommand) throw new Error(`abort failed ${command.input.UploadId}`);
     return next();
   });
-  await assert.rejects(run({ client }), /upload failed.*listing failed.*abort failed upload-1.*abort failed upload-2.*abort failed upload-3/s);
+  await assert.rejects(run({ client }), /upload failed.*listing failed.*abort failed upload-1.*abort failed upload-2.*abort failed upload-3.*retained/s);
   assert.equal(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).length, 3);
   assert.equal(client.calls.filter(c => c instanceof DeleteObjectCommand).length, 2);
-  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 1);
+  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 0);
+  assert.equal(client.buckets.size, 1);
 });

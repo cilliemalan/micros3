@@ -8,10 +8,10 @@ import { assertMissing, assertStatus, withBucket } from './resources.js';
 import { withUploadCleanup } from './multipart-cleanup.js';
 
 export async function verifyCreateMultipartUpload(client) {
-  await withBucket(client, async ({ Bucket }) => {
+  await withBucket(client, async ({ Bucket, retainForUploads }) => {
     const key = 'nested/雪 +&%?#.bin';
     const neighbor = `${key}/child`;
-    await withUploadCleanup(client, Bucket, [key, neighbor], async known => {
+    await withUploadCleanup(client, Bucket, [key, neighbor], retainForUploads, async known => {
       const old = Buffer.from('original object');
       const body = Buffer.from([0, 1, 127, 128, 254, 255]);
       const fields = { ContentType: 'application/octet-stream', CacheControl: 'max-age=123', Metadata: { purpose: 'multipart', revision: 'one' } };
@@ -74,8 +74,8 @@ export async function verifyCreateMultipartUpload(client) {
     });
   });
 
-  await withBucket(client, async ({ Bucket }) => {
-    await withUploadCleanup(client, Bucket, ['missing'], async () => {
+  await withBucket(client, async ({ Bucket, retainForUploads }) => {
+    await withUploadCleanup(client, Bucket, ['missing'], retainForUploads, async () => {
       assertStatus(await client.send(new DeleteBucketCommand({ Bucket })), 204, 'DeleteBucket setup');
       await assertMissing(() => client.send(new CreateMultipartUploadCommand({ Bucket, Key: 'missing' })), 'CreateMultipartUpload missing bucket', 'NoSuchBucket');
     });

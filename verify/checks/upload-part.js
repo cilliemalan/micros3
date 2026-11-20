@@ -7,10 +7,10 @@ import { withUploadCleanup } from './multipart-cleanup.js';
 import { assertMissing, assertStatus, withBucket } from './resources.js';
 
 export async function verifyUploadPart(client) {
-  await withBucket(client, async ({ Bucket }) => {
+  await withBucket(client, async ({ Bucket, retainForUploads }) => {
     const Key = 'nested/雪 +&%?#.bin';
     const neighbor = `${Key}/child`;
-    await withUploadCleanup(client, Bucket, [Key, neighbor], async known => {
+    await withUploadCleanup(client, Bucket, [Key, neighbor], retainForUploads, async known => {
       const original = Buffer.from('existing object');
       assertStatus(await client.send(new PutObjectCommand({ Bucket, Key, Body: original })), 200, 'PutObject setup');
       const create = async key => {
@@ -63,8 +63,8 @@ export async function verifyUploadPart(client) {
         });
       }
       await list(Key, id, [[1, firstTag, first.length], [2, secondTag, last.length], [10000, maxTag, 0]]);
-      await withBucket(client, async ({ Bucket: otherBucket }) => {
-        await withUploadCleanup(client, otherBucket, [Key], async otherKnown => {
+      await withBucket(client, async ({ Bucket: otherBucket, retainForUploads: retainOtherUploads }) => {
+        await withUploadCleanup(client, otherBucket, [Key], retainOtherUploads, async otherKnown => {
           const created = await client.send(new CreateMultipartUploadCommand({ Bucket: otherBucket, Key }));
           if (typeof created.UploadId === 'string' && created.UploadId) otherKnown.push({ Key, UploadId: created.UploadId });
           assertStatus(created, 200, 'CreateMultipartUpload other bucket');
@@ -93,8 +93,8 @@ export async function verifyUploadPart(client) {
       await list(Key, other, [[1, otherTag, 5]]);
     });
   });
-  await withBucket(client, async ({ Bucket }) => {
-    await withUploadCleanup(client, Bucket, ['missing'], async () => {
+  await withBucket(client, async ({ Bucket, retainForUploads }) => {
+    await withUploadCleanup(client, Bucket, ['missing'], retainForUploads, async () => {
       assertStatus(await client.send(new DeleteBucketCommand({ Bucket })), 204, 'DeleteBucket setup');
       await assertMissing(() => client.send(new UploadPartCommand({ Bucket, Key: 'missing', UploadId: 'missing', PartNumber: 1, Body: Buffer.alloc(0) })), 'UploadPart missing bucket', 'NoSuchBucket');
     });

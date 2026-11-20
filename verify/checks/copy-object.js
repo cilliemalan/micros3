@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { CopyObjectCommand, DeleteBucketCommand, DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { assertMissing, assertStatus, ignoreMissing, message, status, withBucket, withCleanup } from './resources.js';
+import { assertMissing, assertStatus, cleanupDelete, message, status, withBucket, withCleanup } from './resources.js';
 
 // CopySource is a URL-encoded path, not an ordinary object key.
 const copySource = (bucket, key) => `${bucket}/${key.split('/').map(encodeURIComponent).join('/')}`;
@@ -9,7 +9,7 @@ async function cleanObjects(client, bucket, keys) {
   const failures = [];
   for (const Key of keys) {
     try {
-      await ignoreMissing(() => client.send(new DeleteObjectCommand({ Bucket: bucket, Key })), ['NoSuchBucket', 'NoSuchKey']);
+      await cleanupDelete(client, new DeleteObjectCommand({ Bucket: bucket, Key }), ['NoSuchBucket', 'NoSuchKey']);
     } catch (error) {
       failures.push(new Error(`${bucket}/${Key}: ${message(error)}`, { cause: error }));
     }

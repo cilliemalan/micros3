@@ -78,10 +78,13 @@ environment file.
 `pnpm start` is an alias for the verifier and accepts the same options. Without
 a custom endpoint, the AWS SDK uses its default AWS S3 endpoint and credentials,
 so ensure the intended endpoint and credentials are configured before running.
-The bucket, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
-listing, multipart creation, part upload, upload listing, completion and abort, CORS and encryption checks create uniquely named buckets and temporary
-objects, uploads or CORS configurations. They attempt cleanup even after failures;
-cleanup errors identify the affected resources, which may need manual removal.
+The bucket, object, listing, multipart, CORS and encryption checks create uniquely
+named buckets and temporary objects, uploads or CORS configurations. Object keys
+are isolated by their per-check buckets. Cleanup is attempted even after failures;
+errors identify the resources without hiding the original check failure. Cleanup
+validates delete responses and checks that deleted valid test buckets no longer
+exist. It is best-effort:
+failed or misleading S3 operations can still require manual intervention.
 A rejected creation is not cleaned up when the response could indicate a bucket
 owned by someone else; after an ambiguous SDK retry, manually inspect the named
 bucket. The repeat-creation and
@@ -93,15 +96,26 @@ The DeleteObject and DeleteObjects checks require PutObject and GetObject
 support, including metadata; DeleteObjects also uses DeleteObject for cleanup.
 The bucket listing check follows up to 1,000 pages when looking for its two test
 buckets. Multipart cleanup lists and aborts uploads, including unknown IDs from
-lost or retried creation responses; listing failures may require manual cleanup.
+lost or retried creation responses, and lists again after aborting to detect
+remaining uploads. It continues deleting objects even if an upload cleanup fails.
+If uploads remain or their removal cannot be verified (including a malformed or
+failed listing), the bucket is retained instead of being deleted: deleting a
+general-purpose bucket can strand in-progress uploads. Inspect the reported bucket,
+abort any remaining uploads, remove objects, and delete the bucket manually.
+This precaution cannot detect uploads omitted by an otherwise plausible listing.
+Timed-out part uploads may still be in flight; S3 may require repeated aborts to
+release their storage.
 
 The configured Floci instance currently accepts invalid bucket names, invalid
 CORS configurations and DeleteObjects requests with more than 1,000 keys; its
 CopyObject metadata replacement also retains old headers. Multipart listings omit
-`IsTruncated`, preventing the multipart creation, part upload, upload listing, completion and abort checks and leaving cleanup unable
-to confirm that every upload was discovered. Floci also accepts a completion with an undersized non-final part. When the flag is normalized for
+`IsTruncated`, preventing the multipart checks and leaving cleanup unable to
+confirm that every upload was discovered. Consequently the verifier retains the
+affected test buckets for manual inspection and cleanup. Floci also accepts a
+completion with an undersized non-final part. When the flag is normalized for
 investigation, Floci also loses the initiation's Cache-Control on completion and
-returns NoSuchUpload instead of NoSuchBucket when aborting or uploading a part in a missing bucket.
+returns NoSuchUpload instead of NoSuchBucket when aborting or uploading a part in
+a missing bucket.
 Those checks fail against it. They are retained to verify S3's validation rules.
 The CORS checks verify configuration APIs; they do not test HTTP preflight or
 response headers.
@@ -115,7 +129,7 @@ continues after failures, so each implemented test should manage its own setup,
 use isolated resource names, and clean up resources in `finally` even if an
 assertion fails. Add new sections to the suite list in `index.js`.
 
-Run `pnpm test:unit` to test the runner, startup behavior, bucket, PutObject,
-GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects, listing, multipart creation, part upload, upload listing, completion and abort, CORS and encryption
-checks offline using mock services. This does not run the S3
-operation checks against a real endpoint.
+Run `pnpm test:unit` to test the runner, startup behavior, resource isolation and
+cleanup (including lost responses, malformed listings, failed deletions and
+retained buckets), and the operation checks offline using mock services. This does
+not run the S3 operation checks against a real endpoint.

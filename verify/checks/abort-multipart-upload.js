@@ -8,10 +8,10 @@ import { withUploadCleanup } from './multipart-cleanup.js';
 import { assertMissing, assertStatus, withBucket } from './resources.js';
 
 export async function verifyAbortMultipartUpload(client) {
-  await withBucket(client, async ({ Bucket }) => {
+  await withBucket(client, async ({ Bucket, retainForUploads }) => {
     const key = 'nested/雪 +&%?#.bin';
     const neighbor = `${key}/child`;
-    await withUploadCleanup(client, Bucket, [key, neighbor], async known => {
+    await withUploadCleanup(client, Bucket, [key, neighbor], retainForUploads, async known => {
       const old = Buffer.from('existing object');
       const body = Buffer.from([0, 1, 127, 128, 254, 255]);
       assertStatus(await client.send(new PutObjectCommand({ Bucket, Key: key, Body: old, ContentType: 'text/plain' })), 200, 'PutObject setup');
@@ -82,8 +82,8 @@ export async function verifyAbortMultipartUpload(client) {
       assertStatus(after, 200, 'GetObject after empty abort');
       assert.deepEqual(Buffer.from(await after.Body.transformToByteArray()), body, 'empty abort preserves object');
 
-      await withBucket(client, async ({ Bucket: otherBucket }) => {
-        await withUploadCleanup(client, otherBucket, [neighbor], async otherKnown => {
+      await withBucket(client, async ({ Bucket: otherBucket, retainForUploads: retainOtherUploads }) => {
+        await withUploadCleanup(client, otherBucket, [neighbor], retainOtherUploads, async otherKnown => {
           const created = await client.send(new CreateMultipartUploadCommand({ Bucket: otherBucket, Key: neighbor }));
           if (typeof created.UploadId === 'string' && created.UploadId) otherKnown.push({ Key: neighbor, UploadId: created.UploadId });
           assertStatus(created, 200, 'CreateMultipartUpload other bucket');
@@ -102,8 +102,8 @@ export async function verifyAbortMultipartUpload(client) {
       });
     });
   });
-  await withBucket(client, async ({ Bucket }) => {
-    await withUploadCleanup(client, Bucket, ['missing'], async () => {
+  await withBucket(client, async ({ Bucket, retainForUploads }) => {
+    await withUploadCleanup(client, Bucket, ['missing'], retainForUploads, async () => {
       assertStatus(await client.send(new DeleteBucketCommand({ Bucket })), 204, 'DeleteBucket setup');
       await assertMissing(() => client.send(new AbortMultipartUploadCommand({ Bucket, Key: 'missing', UploadId: 'missing' })), 'AbortMultipartUpload missing bucket', 'NoSuchBucket');
     });

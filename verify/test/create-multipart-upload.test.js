@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateBucketCommand, CreateMultipartUploadCommand,
-  DeleteBucketCommand, DeleteObjectCommand, GetObjectCommand, ListMultipartUploadsCommand,
+  DeleteBucketCommand, DeleteObjectCommand, GetObjectCommand, HeadBucketCommand, ListMultipartUploadsCommand,
   PutObjectCommand, UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import checks from '../checks/multipart.js';
@@ -37,6 +37,7 @@ class FakeS3 {
       this.buckets.delete(Bucket);
       return ok(204);
     }
+    if (command instanceof HeadBucketCommand) return ok(200);
     if (command instanceof PutObjectCommand) {
       bucket.objects.set(Key, { body: Buffer.from(command.input.Body), ContentType: command.input.ContentType });
       return ok(200);
@@ -144,15 +145,226 @@ test('cleanup discovers unknown uploads after lost responses and paginates befor
     if (command instanceof ListMultipartUploadsCommand) {
       const result = await next();
       pages++;
+      if (!result.Uploads.length) return ok(200, { IsTruncated: false, Uploads: [] });
       if (!command.input.KeyMarker) return ok(200, { IsTruncated: true, NextKeyMarker: result.Uploads[0].Key, NextUploadIdMarker: result.Uploads[0].UploadId, Uploads: result.Uploads.slice(0, 1) });
       return ok(200, { IsTruncated: false, Uploads: result.Uploads.slice(1) });
     }
     return next();
   });
-  await assert.rejects(run({ client }), /response lost/);
-  assert.equal(pages, 2);
+  await assert.rejects(run({ client }), error => error.message === 'response lost');
+  assert.equal(pages, 3);
   assert.equal(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).length, 2);
   assert.equal(client.buckets.size, 0);
+});
+
+test('cleanup reports malformed upload entries but aborts valid uploads on this and later pages', async () => {
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof CreateMultipartUploadCommand) {
+      await next();
+      await next();
+      await next();
+      throw new Error('response lost');
+    }
+    if (command instanceof ListMultipartUploadsCommand) {
+      const { Uploads } = await next();
+      if (!command.input.KeyMarker) return ok(200, {
+        IsTruncated: true, NextKeyMarker: Uploads[1].Key, NextUploadIdMarker: Uploads[1].UploadId,
+        Uploads: [null, Uploads[0], { Key: 'bad' }, { Key: '', UploadId: 'invalid' }, Uploads[1]],
+      });
+      return ok(200, { IsTruncated: false, Uploads: [Uploads[2]] });
+    }
+    return next();
+  });
+  await assert.rejects(run({ client }), err => {
+    assert.match(err.message, /response lost/);
+    assert.match(err.message, /listing uploads:.*upload key and ID/);
+    assert.match(err.message, /bucket .*retained.*upload/i);
+    return true;
+  });
+  assert.deepEqual(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).map(c => c.input.UploadId),
+    ['upload-1', 'upload-2', 'upload-3']);
+  assert.equal(client.buckets.size, 1);
+  assert.equal([...client.buckets.values()][0].uploads.size, 0);
+});
+
+test('cleanup reports an invalid listing status but still aborts uploads from every page', async () => {
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof CreateMultipartUploadCommand) {
+      await next();
+      await next();
+      throw new Error('response lost');
+    }
+    if (command instanceof ListMultipartUploadsCommand) {
+      const { Uploads } = await next();
+      if (!command.input.KeyMarker) return ok(201, {
+        IsTruncated: true, NextKeyMarker: Uploads[0].Key, NextUploadIdMarker: Uploads[0].UploadId,
+        Uploads: [Uploads[0]],
+      });
+      return ok(200, { IsTruncated: false, Uploads: [Uploads[1]] });
+    }
+    return next();
+  });
+  await assert.rejects(run({ client }), /response lost.*cleanup ListMultipartUploads HTTP status.*retained/s);
+  assert.deepEqual(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).map(c => c.input.UploadId),
+    ['upload-1', 'upload-2']);
+  assert.equal(client.buckets.size, 1);
+  assert.equal([...client.buckets.values()][0].uploads.size, 0);
+});
+
+test('cleanup retains an existing bucket when upload listing falsely says NoSuchBucket', async () => {
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof CreateMultipartUploadCommand) {
+      await next();
+      throw new Error('response lost');
+    }
+    if (command instanceof ListMultipartUploadsCommand) throw error('NoSuchBucket');
+    return next();
+  });
+  await assert.rejects(run({ client }), /response lost.*listing uploads:.*NoSuchBucket.*retained/s);
+  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 0);
+  assert.equal(client.buckets.size, 1);
+  assert.equal([...client.buckets.values()][0].uploads.size, 1);
+});
+
+test('cleanup retains the bucket if a NoSuchBucket listing cannot be verified', async () => {
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof CreateMultipartUploadCommand) {
+      await next();
+      throw new Error('response lost');
+    }
+    if (command instanceof ListMultipartUploadsCommand) throw error('NoSuchBucket');
+    if (command instanceof HeadBucketCommand) throw error('AccessDenied', 403);
+    return next();
+  });
+  await assert.rejects(run({ client }), /response lost.*NoSuchBucket; cannot verify bucket: AccessDenied.*retained/s);
+  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 0);
+  assert.equal(client.buckets.size, 1);
+});
+
+test('cleanup reports non-Error listing failures and retains the bucket', async () => {
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof CreateMultipartUploadCommand) {
+      await next();
+      throw new Error('response lost');
+    }
+    if (command instanceof ListMultipartUploadsCommand) throw null;
+    return next();
+  });
+  await assert.rejects(run({ client }), /response lost.*listing uploads: null.*retained/s);
+  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 0);
+  assert.equal(client.buckets.size, 1);
+});
+
+test('cleanup continues past a malformed uploads array and reports the undiscoverable upload', async () => {
+  let creates = 0;
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof CreateMultipartUploadCommand && ++creates === 2) {
+      await next();
+      await next();
+      throw new Error('response lost');
+    }
+    if (command instanceof ListMultipartUploadsCommand) {
+      const { Uploads } = await next();
+      if (!command.input.KeyMarker) return ok(200, {
+        IsTruncated: true, NextKeyMarker: Uploads[1].Key, NextUploadIdMarker: Uploads[1].UploadId,
+        Uploads: { malformed: true },
+      });
+      return ok(200, { IsTruncated: false, Uploads: [Uploads[2]] });
+    }
+    return next();
+  });
+  await assert.rejects(run({ client }), err => {
+    assert.match(err.message, /response lost/);
+    assert.match(err.message, /listing uploads:.*uploads array/i);
+    assert.match(err.message, /cleanup failed for bucket .*retained.*upload/i);
+    return true;
+  });
+  assert.deepEqual(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).map(c => c.input.UploadId),
+    ['upload-1', 'upload-3']);
+  assert.equal(client.calls.filter(c => c instanceof DeleteObjectCommand).length, 2);
+  assert.equal([...client.buckets.values()][0].uploads.size, 1);
+  assert.ok([...client.buckets.values()][0].uploads.has('upload-2'));
+});
+
+test('cleanup retains the bucket when uploads remain after acknowledged aborts, including later pages', async () => {
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof CreateMultipartUploadCommand) {
+      await next();
+      await next();
+      await next();
+      throw new Error('response lost');
+    }
+    if (command instanceof AbortMultipartUploadCommand && command.input.UploadId !== 'upload-1') return ok(204); // Broken no-ops.
+    if (command instanceof ListMultipartUploadsCommand) {
+      const result = await next();
+      if (result.Uploads.length === 2) {
+        if (!command.input.KeyMarker) return ok(200, {
+          IsTruncated: true, NextKeyMarker: result.Uploads[0].Key, NextUploadIdMarker: result.Uploads[0].UploadId,
+          Uploads: [result.Uploads[0]],
+        });
+        return ok(200, { IsTruncated: false, Uploads: [result.Uploads[1]] });
+      }
+      return result;
+    }
+    if (command instanceof DeleteBucketCommand) {
+      // A general-purpose S3 bucket can be deleted while uploads are in progress.
+      service.buckets.delete(command.input.Bucket);
+      return ok(204);
+    }
+    return next();
+  });
+  await assert.rejects(run({ client }), err => {
+    assert.match(err.message, /response lost/);
+    assert.match(err.message, /upload.*upload-2.*remain/i);
+    assert.match(err.message, /upload.*upload-3.*remain/i);
+    assert.match(err.message, /bucket .*retained.*upload/i);
+    return true;
+  });
+  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 0);
+  const bucket = [...client.buckets.values()][0];
+  assert.deepEqual([...bucket.uploads.keys()], ['upload-2', 'upload-3']);
+});
+
+test('cleanup reports failure to verify that aborted uploads are gone', async () => {
+  let listings = 0;
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof CreateMultipartUploadCommand) {
+      await next();
+      throw new Error('response lost');
+    }
+    if (command instanceof ListMultipartUploadsCommand && ++listings === 2) throw new Error('verification unavailable');
+    return next();
+  });
+  await assert.rejects(run({ client }), /response lost.*listing uploads: verification unavailable.*retained/s);
+  assert.equal(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).length, 1);
+  assert.equal(client.calls.filter(c => c instanceof DeleteObjectCommand).length, 2);
+  assert.equal(client.buckets.size, 1);
+  assert.equal([...client.buckets.values()][0].uploads.size, 0);
+});
+
+test('multipart cleanup reports invalid abort and object delete statuses and continues', async () => {
+  const client = new FakeS3(async (command, service, next) => {
+    if (command instanceof CreateMultipartUploadCommand) {
+      await next();
+      await next();
+      throw new Error('response lost');
+    }
+    const response = await next();
+    if (command instanceof AbortMultipartUploadCommand || command instanceof DeleteObjectCommand) {
+      response.$metadata.httpStatusCode = 200;
+    }
+    return response;
+  });
+  await assert.rejects(run({ client }), err => {
+    assert.match(err.message, /response lost/);
+    assert.match(err.message, /cleanup AbortMultipartUpload HTTP status/);
+    assert.match(err.message, /cleanup DeleteObject HTTP status/);
+    assert.match(err.message, /bucket .*retained.*upload/i);
+    return true;
+  });
+  assert.equal(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).length, 2);
+  assert.equal(client.calls.filter(c => c instanceof DeleteObjectCommand).length, 2);
+  assert.equal(client.buckets.size, 1);
 });
 
 test('cleanup reports listing and abort errors while attempting all known aborts and object deletion', async () => {
@@ -169,11 +381,13 @@ test('cleanup reports listing and abort errors while attempting all known aborts
     assert.match(err.message, /abort failed upload-1/);
     assert.match(err.message, /abort failed upload-2/);
     assert.match(err.message, /abort failed upload-3/);
+    assert.match(err.message, /bucket .*retained.*upload/i);
     return true;
   });
   assert.equal(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).length, 3);
   assert.equal(client.calls.filter(c => c instanceof DeleteObjectCommand).length, 2);
-  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 1);
+  assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 0);
+  assert.equal(client.buckets.size, 1);
 });
 
 test('rejected bucket creation is never cleaned; a recreated missing bucket is cleaned', async () => {
@@ -207,8 +421,9 @@ test('cleanup detects missing and repeated pagination markers', async () => {
       }
       return next();
     });
-    await assert.rejects(run({ client }), /response lost.*cleanup failed/s, mode);
+    await assert.rejects(run({ client }), /response lost.*cleanup failed.*retained/s, mode);
     assert.equal(client.calls.filter(c => c instanceof AbortMultipartUploadCommand).length, 1, mode);
-    assert.equal(client.buckets.size, 0, mode);
+    assert.equal(client.calls.filter(c => c instanceof DeleteBucketCommand).length, 0, mode);
+    assert.equal(client.buckets.size, 1, mode);
   }
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { CreateBucketCommand, DeleteBucketCommand } from '@aws-sdk/client-s3';
+import { CreateBucketCommand, DeleteBucketCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
 
 // Bucket names are global on AWS, so never reuse a name or delete a known collision.
 export function bucketName() {
@@ -50,6 +50,13 @@ export async function ignoreMissing(action, errorCodes = ['NoSuchBucket']) {
   }
 }
 
+export async function cleanupDelete(client, command, errorCodes) {
+  await ignoreMissing(async () => {
+    const response = await client.send(command);
+    assertStatus(response, 204, `cleanup ${command.constructor.name.replace(/Command$/, '')}`);
+  }, errorCodes);
+}
+
 export function createInput(Bucket, region) {
   return region === 'us-east-1'
     ? { Bucket }
@@ -60,6 +67,7 @@ export async function withBucket(client, run) {
   const Bucket = bucketName();
   const region = await client.config.region();
   let mayExist = false;
+  let retainForUploads = false;
 
   return withCleanup(async () => {
     // A transport or server error can happen after the bucket was created.
@@ -77,10 +85,14 @@ export async function withBucket(client, run) {
       }
       throw error;
     }
-    return run({ Bucket, region, response, markDeleted: () => { mayExist = false; } });
+    return run({ Bucket, region, response, markDeleted: () => { mayExist = false; },
+      retainForUploads: () => { retainForUploads = true; } });
   }, async () => {
     if (mayExist) {
-      await ignoreMissing(() => client.send(new DeleteBucketCommand({ Bucket })));
+      if (retainForUploads) throw new Error(`bucket ${Bucket} retained because multipart uploads may remain; inspect and remove manually`);
+      await cleanupDelete(client, new DeleteBucketCommand({ Bucket }));
+      // A broken endpoint can acknowledge deletion without removing the bucket.
+      await assertMissing(() => client.send(new HeadBucketCommand({ Bucket })), 'HeadBucket after cleanup');
     }
   }, `bucket ${Bucket}`);
 }

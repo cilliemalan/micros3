@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { DeleteBucketCommand, DeleteObjectCommand, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { assertStatus, ignoreMissing, message, status, withBucket, withCleanup } from './resources.js';
+import { assertStatus, cleanupDelete, message, status, withBucket, withCleanup } from './resources.js';
 import { verifyCopyObject } from './copy-object.js';
 import { verifyDeleteObject } from './delete-object.js';
 import { verifyDeleteObjects } from './delete-objects.js';
@@ -86,7 +86,7 @@ async function verifyHeadObject(client) {
       // Even failed requests can have created a resource; also clean up the missing key.
       for (const Key of keys) {
         try {
-          await ignoreMissing(() => client.send(new DeleteObjectCommand({ Bucket, Key })), ['NoSuchBucket', 'NoSuchKey']);
+          await cleanupDelete(client, new DeleteObjectCommand({ Bucket, Key }), ['NoSuchBucket', 'NoSuchKey']);
         } catch (error) {
           failures.push(new Error(`${Bucket}/${Key}: ${message(error)}`, { cause: error }));
         }
