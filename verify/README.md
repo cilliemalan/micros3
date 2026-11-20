@@ -20,6 +20,14 @@ exposes no response body for HEAD; the check does not inspect the wire for an
 improperly sent body. CopyObject checks cross-bucket and self-copies, binary and
 empty objects, URL-encoded keys, metadata and headers, metadata replacement,
 overwrites, conditional copies, isolation, and missing keys and buckets.
+Integrity checks compare ETags with independently calculated MD5 digests for
+binary, empty, overwritten and SSE-S3 single-part uploads and for copies (as
+returned by PutObject, GetObject, HeadObject and the CopyObject result), and
+verify that PutObject rejects a mismatched `Content-MD5` (`BadDigest`), a
+malformed one (`InvalidDigest`), and mismatched CRC32 or SHA-256 checksums
+(`BadDigest`) without creating or replacing the object. They also check the
+checksum echoed by PutObject. Multipart, SSE-KMS and SSE-C ETags are not
+assumed to be MD5 digests and are not checked.
 DeleteObject checks binary and empty objects, exact-key
 isolation, missing and repeated deletions, recreation, and missing buckets.
 DeleteObjects checks verbose and quiet responses, deletion of existing, empty

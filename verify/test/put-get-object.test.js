@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { etagOf } from '../checks/integrity.js';
 import { CreateBucketCommand, DeleteBucketCommand, DeleteObjectCommand, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import checks from '../checks/object.js';
 
@@ -39,7 +40,7 @@ class FakeS3 {
     }
     if (command instanceof PutObjectCommand) {
       const { Body, ContentType, CacheControl, ContentDisposition, Metadata } = command.input;
-      const ETag = `"${Buffer.from(Body).toString('hex')}"`;
+      const ETag = etagOf(Buffer.from(Body));
       objects.set(Key, { Body: Buffer.from(Body), ContentType, CacheControl, ContentDisposition, Metadata, ETag });
       return ok(200, { ETag });
     }

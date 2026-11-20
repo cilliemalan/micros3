@@ -13,7 +13,7 @@ region supplied by `floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket,
 object listing, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
-CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMultipartUpload, AbortMultipartUpload, CORS configuration, and encryption checks are implemented. The checked boxes below mean a check exists, not that every S3 behavior has been covered or that the check passes against Floci or AWS. See the follow-up work below.
+CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMultipartUpload, AbortMultipartUpload, CORS configuration, encryption, and ETag/checksum integrity checks are implemented. The checked boxes below mean a check exists, not that every S3 behavior has been covered or that the check passes against Floci or AWS. See the follow-up work below.
 
 ## Verification review and follow-up
 
@@ -118,13 +118,23 @@ CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMult
       nonmatching origins, methods and headers; first-match rule order and
       wildcards; preflight OPTIONS and actual response headers; and changes
       after replacement/deletion. See [PutBucketCors](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketCors.html).
-- [ ] Check independently calculated ETags for small single-part SSE-S3/plain
+- [x] Check independently calculated ETags for small single-part SSE-S3/plain
       uploads and copies, and exercise checksum validation including mismatched
       checksums where supported. Current checks mostly compare a service's ETag
       with itself, so a consistently wrong value can pass: the offline PutObject
       fake uses the body bytes as hex instead of an MD5 and still passes. Do not
       assume a multipart, SSE-KMS or SSE-C ETag is MD5; see
       [Object ETag](https://docs.aws.amazon.com/AmazonS3/latest/API/API_Object.html).
+      [integrity.js](../verify/checks/integrity.js) adds three object checks:
+      MD5 ETags (PutObject, GetObject, HeadObject and CopyObject results for
+      binary, empty, overwritten, SSE-S3, cross-bucket and same-bucket copies),
+      `Content-MD5` validation (`BadDigest` for a mismatch, `InvalidDigest` for a
+      malformed digest) and CRC32/SHA-256 `x-amz-checksum-*` validation
+      (`BadDigest`), each confirming a rejected upload neither creates nor
+      replaces the object. Multipart/KMS/SSE-C ETags are not assumed. Its
+      offline tests use a real-SDK HTTP fixture and confirm the mismatched
+      values reach the wire; the other fakes now use MD5 ETags. All three
+      checks pass against Floci; this is not an AWS reference run.
 - [ ] Extend listing coverage to `EncodingType=url` for both object-listing
       APIs, XML-sensitive/control-character and multibyte keys, and encoded
       continuation/marker behavior. Verify raw HTTP/XML as well as SDK-decoded
