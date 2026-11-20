@@ -6,8 +6,8 @@ Floci instance to validate the verifier, using the endpoint, credentials, and
 region supplied by `../floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket,
-object listing, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects, CORS configuration,
-and encryption checks are implemented; the other operation checks remain failing stubs.
+object listing, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
+CreateMultipartUpload, CORS configuration, and encryption checks are implemented; the other operation checks remain failing stubs.
 
 ## Setup and cleanup
 
@@ -49,7 +49,8 @@ and encryption checks are implemented; the other operation checks remain failing
 
 ## Multipart operations
 
-- [ ] **CreateMultipartUpload**: initiate an upload and capture its upload ID.
+- [x] **CreateMultipartUpload**: verify response and unique IDs, concurrent uploads,
+      non-destructive initiation, metadata on completion, and missing buckets.
 - [ ] **UploadPart**: upload parts and capture their ETags.
 - [ ] **ListMultipartUploads**: confirm an in-progress upload is listed.
 - [ ] **CompleteMultipartUpload**: complete an upload and verify the assembled
