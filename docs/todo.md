@@ -13,7 +13,7 @@ region supplied by `floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket,
 object listing, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
-CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMultipartUpload, AbortMultipartUpload, CORS configuration, encryption, and ETag/checksum integrity checks are implemented. The checked boxes below mean a check exists, not that every S3 behavior has been covered or that the check passes against Floci or AWS. See the follow-up work below.
+CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMultipartUpload, AbortMultipartUpload, CORS configuration, encryption, and ETag/checksum integrity checks and URL-encoded listings of special keys are implemented. The checked boxes below mean a check exists, not that every S3 behavior has been covered or that the check passes against Floci or AWS. See the follow-up work below.
 
 ## Verification review and follow-up
 
@@ -50,6 +50,13 @@ CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMult
   - Completing two one-byte parts succeeded and produced a two-byte object;
     [CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html)
     specifies `EntityTooSmall` for an undersized non-final part.
+  - Object listings order keys by UTF-16 code units rather than UTF-8 bytes:
+    `enc/😀.txt` (U+1F600) is listed before `enc/Ａ.txt` (U+FF21). S3 returns
+    keys in [UTF-8 binary order](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjectsV2.html).
+    In a diagnostic run with the expected order relaxed, ListObjectsV2 also
+    used the raw key as its continuation token, so a key containing U+0001
+    produced a response with a character XML 1.0 forbids even with
+    `EncodingType=url`.
   - When the missing truncation flag was normalized **only for a diagnostic
     run**, completed multipart content lost the initiation's `Cache-Control`.
     This establishes an end-to-end discrepancy, not which operation loses it.
@@ -135,10 +142,20 @@ CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMult
       offline tests use a real-SDK HTTP fixture and confirm the mismatched
       values reach the wire; the other fakes now use MD5 ETags. All three
       checks pass against Floci; this is not an AWS reference run.
-- [ ] Extend listing coverage to `EncodingType=url` for both object-listing
+- [x] Extend listing coverage to `EncodingType=url` for both object-listing
       APIs, XML-sensitive/control-character and multibyte keys, and encoded
       continuation/marker behavior. Verify raw HTTP/XML as well as SDK-decoded
       values where necessary.
+      [listing-encoding.js](../verify/checks/listing-encoding.js) adds a check
+      per listing API. Encoded values must be printable ASCII and form-decode
+      (`+` is a space) to the original; the exact set of unescaped characters
+      is not assumed, so the ListMultipartUploads check no longer requires
+      `encodeURIComponent` output either. Keys are expected in UTF-8 byte
+      order, control-character keys are only listed encoded, V1 `NextMarker`
+      must decode to the last entry and is sent back decoded, and raw XML is
+      captured ([encoding.js](../verify/checks/encoding.js)) and rejected if it
+      contains characters XML 1.0 forbids. Offline tests use a real-SDK HTTP
+      fixture. Against Floci both checks fail on key order (see above).
 - [ ] Cover date-based conditional GET/HEAD/copy requests and their interaction
       with ETag conditions, and test the actual HEAD response on the wire;
       the SDK does not expose an improperly sent HEAD body. Define which

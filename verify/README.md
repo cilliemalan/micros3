@@ -11,7 +11,20 @@ checks cover bucket creation, listing, existence, location and deletion,
 including invalid names, repeat creation, missing buckets and non-empty buckets.
 Both object-listing APIs are checked for ordered keys and metadata, empty and
 missing buckets, prefixes, delimiters, and pagination (including rolled-up
-prefixes). PutObject checks binary and empty uploads, metadata and headers,
+prefixes). Separate checks list keys containing URL- and XML-sensitive
+characters, whitespace, control characters and multibyte characters (including
+characters outside the Basic Multilingual Plane, whose UTF-8 order differs from
+their UTF-16 order) with `EncodingType=url` for both listing APIs. They verify
+UTF-8 binary key order, that every encoded field (keys, common prefixes,
+`Prefix`, `Delimiter`, `Marker`/`NextMarker` and `StartAfter`) is printable
+ASCII that decodes to the original value, prefix and delimiter filtering, and
+pagination with decoded markers and opaque continuation tokens. Because S3
+encodes a space as `+` and does not document which safe characters it leaves
+unescaped, any encoding that form-decodes to the original value is accepted.
+Keys that XML 1.0 can represent are also listed without encoding to check XML
+escaping and whitespace preservation. The raw response XML is checked to be
+valid UTF-8 without characters XML 1.0 forbids, which the SDK's parser would
+otherwise tolerate. PutObject checks binary and empty uploads, metadata and headers,
 overwrites, key isolation, and missing buckets. GetObject checks binary and empty
 content, metadata and headers, overwrites, ranges, ETag conditions, and missing
 keys and buckets. HeadObject checks binary and empty objects, metadata and headers,
@@ -156,6 +169,9 @@ confirm that every upload was discovered. Consequently the verifier retains the
 affected test buckets for manual inspection and cleanup. Floci also accepts a
 completion with an undersized non-final part. When the flag is normalized for
 investigation, Floci also loses the initiation's Cache-Control on completion.
+Its object listings order keys by UTF-16 code units instead of UTF-8 bytes, and
+ListObjectsV2 continuation tokens embed the raw key, so a key containing a
+control character yields XML that XML 1.0 forbids.
 Those checks fail against it.
 
 When UploadPart, AbortMultipartUpload or CompleteMultipartUpload address an

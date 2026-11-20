@@ -98,8 +98,26 @@ test('ListMultipartUploads verifies listing semantics and cleans isolated resour
   assert.ok(client.calls.some(c => c instanceof ListMultipartUploadsCommand && c.input.Delimiter && c.input.MaxUploads === 1));
 });
 
+test('ListMultipartUploads accepts S3-style form encoding of listed values', async () => {
+  // S3 leaves `/` unescaped and encodes a space as `+`.
+  const form = value => encodeURIComponent(decodeURIComponent(value)).replace(/%20/g, '+').replace(/%2F/g, '/');
+  let encoded = 0;
+  const client = new FakeS3(async (command, service, next) => {
+    const result = await next();
+    if (command instanceof ListMultipartUploadsCommand && command.input.EncodingType === 'url') {
+      encoded++;
+      result.Prefix = form(result.Prefix);
+      for (const upload of result.Uploads ?? []) upload.Key = form(upload.Key);
+    }
+    return result;
+  });
+  await run({ client });
+  assert.equal(encoded, 1);
+  assert.equal(client.buckets.size, 0);
+});
+
 test('ListMultipartUploads detects broken responses, filtering, pagination and lifecycle', async () => {
-  const modes = ['status', 'bucket', 'truncation', 'empty', 'object listed', 'missing upload', 'duplicate upload', 'order', 'timestamp', 'initiation order', 'storage', 'prefix', 'marker', 'delimiter', 'encoded', 'encoded prefix', 'next key', 'next id', 'page duplicate', 'prefix page', 'grouped prefix', 'other bucket', 'aborted', 'completed', 'missing bucket', 'missing code'];
+  const modes = ['status', 'bucket', 'truncation', 'empty', 'object listed', 'missing upload', 'duplicate upload', 'order', 'timestamp', 'initiation order', 'storage', 'prefix', 'marker', 'delimiter', 'encoded', 'encoded prefix', 'unencoded key', 'next key', 'next id', 'page duplicate', 'prefix page', 'grouped prefix', 'other bucket', 'aborted', 'completed', 'missing bucket', 'missing code'];
   for (const mode of modes) {
     let changed = false;
     const client = new FakeS3(async (command, service, next) => {
@@ -129,7 +147,8 @@ test('ListMultipartUploads detects broken responses, filtering, pagination and l
         else if (mode === 'marker' && KeyMarker === 'alpha/one' && !MaxUploads) result.Uploads.unshift({ Key: 'alpha/one', UploadId: 'bad', Initiated: new Date(), StorageClass: 'STANDARD' });
         else if (mode === 'delimiter' && Delimiter && !MaxUploads && !KeyMarker) result.CommonPrefixes = [];
         else if (mode === 'encoded' && EncodingType) result.Uploads[0].Key = 'wrong';
-        else if (mode === 'encoded prefix' && EncodingType) result.Prefix = Prefix;
+        else if (mode === 'encoded prefix' && EncodingType) result.Prefix = 'other%2F';
+        else if (mode === 'unencoded key' && EncodingType) result.Uploads[0].Key = decodeURIComponent(result.Uploads[0].Key);
         else if (mode === 'next key' && MaxUploads === 1 && !Delimiter) delete result.NextKeyMarker;
         else if (mode === 'next id' && MaxUploads === 1 && !Delimiter) delete result.NextUploadIdMarker;
         else if (mode === 'page duplicate' && MaxUploads === 1 && KeyMarker && !Delimiter) result.Uploads[0].UploadId = 'wrong';

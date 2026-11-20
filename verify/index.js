@@ -7,6 +7,7 @@ import { resolveTimeouts } from './timeouts.js';
 import bucketTests from './checks/bucket.js';
 import objectTests from './checks/object.js';
 import listingTests from './checks/listing.js';
+import listingEncodingTests from './checks/listing-encoding.js';
 import multipartTests from './checks/multipart.js';
 import corsTests from './checks/cors.js';
 import encryptionTests from './checks/encryption.js';
@@ -77,7 +78,7 @@ async function resolveRegion(client) {
 const suites = [
   { name: 'Bucket operations', tests: bucketTests },
   { name: 'Object operations', tests: objectTests },
-  { name: 'Listing operations', tests: listingTests },
+  { name: 'Listing operations', tests: [...listingTests, ...listingEncodingTests] },
   { name: 'Multipart operations', tests: multipartTests },
   { name: 'CORS operations', tests: corsTests },
   { name: 'Encryption', tests: encryptionTests },

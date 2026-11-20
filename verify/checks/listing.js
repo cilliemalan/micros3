@@ -29,11 +29,11 @@ const alphaKeys = [
   'alpha/one.txt', 'alpha/sub/second.txt', 'alpha/sub/three.txt', 'alpha/third/deep.txt', 'alpha/two.txt',
 ];
 
-async function withObjects(client, Bucket, run) {
+export async function withObjects(client, Bucket, run, uploads = objects) {
   const attempted = [];
   const expected = new Map();
   await withCleanup(async () => {
-    for (const { Key, Body } of objects) {
+    for (const { Key, Body } of uploads) {
       // A failed request may still have stored the object.
       attempted.push(Key);
       const response = await client.send(new PutObjectCommand({ Bucket, Key, Body: Buffer.from(Body) }));

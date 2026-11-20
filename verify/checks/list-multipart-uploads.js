@@ -5,6 +5,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { assertMissing, assertStatus, withBucket } from './resources.js';
 import { withUploadCleanup } from './multipart-cleanup.js';
+import { assertUrlEncoded } from './encoding.js';
 
 export async function verifyListMultipartUploads(client) {
   await withBucket(client, async ({ Bucket, retainForUploads }) => {
@@ -76,8 +77,10 @@ export async function verifyListMultipartUploads(client) {
       const encoded = await list({ Prefix: 'special/', EncodingType: 'url' });
       assert.equal(encoded.IsTruncated, false, 'encoded listing not truncated');
       assert.equal(encoded.EncodingType, 'url', 'encoding type');
-      assert.equal(encoded.Prefix, 'special%2F', 'encoded prefix');
-      assert.deepEqual(pairs(encoded), [[encodeURIComponent(keys[4]), special]], 'URL-encoded key');
+      assertUrlEncoded(encoded.Prefix, 'special/', 'encoded prefix');
+      assert.equal(encoded.Uploads?.length, 1, 'encoded listing uploads');
+      assertUrlEncoded(encoded.Uploads[0].Key, keys[4], 'URL-encoded key');
+      assert.equal(encoded.Uploads[0].UploadId, special, 'encoded listing upload ID');
 
       // Follow both markers, including across two uploads with the same key.
       let markers = {};
