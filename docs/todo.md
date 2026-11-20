@@ -96,12 +96,12 @@ All are recorded in design.md. Nothing here is open.
 
 ## Phase 6: DeleteObjects and CopyObject
 
-- [ ] DeleteObjects: parse the `Delete` XML body, with `Object` entries and `Quiet`. Reject more than 1,000 keys. Match `delete-objects.js` for the status and code. Report each key under `Deleted` or `Error`. A missing key counts as deleted.
-- [ ] CopyObject: parse `x-amz-copy-source` (URL-decoded, with an optional leading slash). A missing source returns `NoSuchKey`, and a missing destination bucket returns `NoSuchBucket`. Copy the blob file to a new blob id, so each blob has one owner and deletes stay simple.
-- [ ] `x-amz-metadata-directive`: COPY (default) keeps the source metadata. REPLACE keeps only the metadata the request supplies. This fixes Floci's Cache-Control bug.
-- [ ] Copies within and across buckets. The response is `CopyObjectResult` with `ETag` and `LastModified`.
+- [x] DeleteObjects: parse the `Delete` XML body, with `Object` entries and `Quiet`. Reject more than 1,000 keys. Match `delete-objects.js` for the status and code. Report each key under `Deleted` or `Error`. A missing key counts as deleted. (`lib/delete_objects_handler.cpp`. More than 1,000 keys, an empty list or an `Object` without `Key` is `MalformedXML` (400). `Content-MD5` and the CRC32 and SHA-256 checksum headers are checked against the body when present. All rows go in one transaction, then the blobs are removed. A `VersionId` other than `null` is reported under `Error` as `NoSuchVersion`.)
+- [x] CopyObject: parse `x-amz-copy-source` (URL-decoded, with an optional leading slash). A missing source returns `NoSuchKey`, and a missing destination bucket returns `NoSuchBucket`. Copy the blob file to a new blob id, so each blob has one owner and deletes stay simple. (`copy_object` in `lib/object_handlers.cpp`, with `StagedBlob::copy_from`, which uses `copy_file_range` and falls back to read and write. The copy runs on the event loop, so a very large copy holds up other requests. A missing source bucket is `NoSuchBucket`, a `versionId` other than `null` is `InvalidArgument`, and `If-Match`/`If-None-Match` answer 501 as on PutObject.)
+- [x] `x-amz-metadata-directive`: COPY (default) keeps the source metadata. REPLACE keeps only the metadata the request supplies. This fixes Floci's Cache-Control bug. (Any other directive is `InvalidArgument`. A self-copy without REPLACE is `InvalidRequest` (400), as in S3.)
+- [x] Copies within and across buckets. The response is `CopyObjectResult` with `ETag` and `LastModified`. (The copy keeps the source ETag, and the response carries `x-amz-server-side-encryption: AES256`.)
 
-**Checks:** `delete-objects.js`, `copy-object.js`.
+**Checks:** `delete-objects.js`, `copy-object.js`. (On 2026-11-20, DeleteObjects, CopyObject, "Object ETags are MD5 digests" and "CopyObject date conditions" passed.)
 
 ## Phase 7: CORS configuration
 
@@ -133,7 +133,7 @@ All are recorded in design.md. Nothing here is open.
 - [x] Failed `If-None-Match` or `If-Modified-Since` on GET or HEAD returns 304. Failed `If-Match` or `If-Unmodified-Since` returns 412 `PreconditionFailed`.
 - [x] Compare dates at one-second resolution, using the stored `Last-Modified`.
 - [x] HEAD and 304 responses have no body on the wire, even on a raw socket.
-- [ ] CopyObject: `x-amz-copy-source-if-*` headers. A failed condition returns 412 `PreconditionFailed`.
+- [x] CopyObject: `x-amz-copy-source-if-*` headers. A failed condition returns 412 `PreconditionFailed`. (Through `conditions::evaluate`, with both failure outcomes mapped to 412.)
 - [ ] Conditional writes (D7): `If-None-Match` on PutObject or CompleteMultipartUpload returns 501 `NotImplemented`. (Done for PutObject, which also answers `If-Match` with 501. CompleteMultipartUpload remains, in Phase 8.)
 
 **Checks:** `conditional.js`, with `integrity.js` for the body rules.

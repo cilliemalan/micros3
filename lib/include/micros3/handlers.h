@@ -35,6 +35,11 @@ std::unique_ptr<http::Exchange> put_object(Store &store, const http::Request &re
 http::Response get_object(Store &store, const http::Request &request, const router::Route &route);
 http::Response head_object(Store &store, const http::Request &request, const router::Route &route);
 http::Response delete_object(Store &store, const http::Request &request, const router::Route &route);
+http::Response copy_object(Store &store, const http::Request &request, const router::Route &route);
+
+// DeleteObjects (delete_objects_handler.cpp). `body` is the whole request body.
+http::Response delete_objects(Store &store, const http::Request &request, const router::Route &route,
+                              std::string_view body);
 
 // A 200 response with an XML body.
 http::Response xml_response(std::string body);

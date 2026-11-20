@@ -1,4 +1,4 @@
-// PutObject, GetObject, HeadObject and DeleteObject.
+// PutObject, CopyObject, GetObject, HeadObject and DeleteObject.
 
 #include "micros3/buckets.h"
 #include "micros3/clock.h"
@@ -6,6 +6,8 @@
 #include "micros3/digest.h"
 #include "micros3/handlers.h"
 #include "micros3/objects.h"
+#include "micros3/url.h"
+#include "micros3/xml.h"
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -245,6 +247,37 @@ http::Response read_object(Store &store, const http::Request &request, const rou
     return response;
 }
 
+// The bucket, key and version of an x-amz-copy-source header.
+struct CopySource {
+    std::string bucket;
+    std::string key;
+    std::optional<std::string> version_id;
+};
+
+// Parses `bucket/key[?versionId=v]`, percent-encoded, with an optional leading
+// slash. Returns nullopt when it is malformed.
+std::optional<CopySource> parse_copy_source(std::string_view header) {
+    std::string_view rest = header;
+    std::optional<std::string> version_id;
+    if (const std::size_t question = rest.find('?'); question != std::string_view::npos) {
+        const auto query = url::Query::parse(rest.substr(question + 1));
+        if (!query) return std::nullopt;
+        version_id = query->get("versionId");
+        rest = rest.substr(0, question);
+    }
+    if (!rest.empty() && rest.front() == '/') rest.remove_prefix(1);
+    const std::size_t slash = rest.find('/');
+    if (slash == std::string_view::npos || slash == 0 || slash + 1 == rest.size()) return std::nullopt;
+    auto bucket = url::decode(rest.substr(0, slash), false);
+    auto key = url::decode(rest.substr(slash + 1), false);
+    if (!bucket || !key) return std::nullopt;
+    return CopySource{std::move(*bucket), std::move(*key), std::move(version_id)};
+}
+
+S3Error invalid_copy_source() {
+    return invalid_argument("Copy Source must mention the source bucket and key: sourcebucket/sourcekey");
+}
+
 } // namespace
 
 std::unique_ptr<http::Exchange> put_object(Store &store, const http::Request &request, const router::Route &route) {
@@ -289,6 +322,93 @@ std::unique_ptr<http::Exchange> put_object(Store &store, const http::Request &re
     if (!buckets::find(store, route.bucket)) return fixed_error(no_such_bucket(), request);
     return std::make_unique<PutObjectExchange>(store, request, route, std::move(metadata), std::move(content_md5),
                                                std::move(crc32), std::move(sha256));
+}
+
+http::Response copy_object(Store &store, const http::Request &request, const router::Route &route) {
+    // Conditional writes are not supported (D7).
+    if (request.header("if-none-match") || request.header("if-match")) {
+        return error(not_implemented("Conditional writes are not implemented."), request);
+    }
+    const auto source = parse_copy_source(request.header("x-amz-copy-source").value_or(""));
+    if (!source) return error(invalid_copy_source(), request);
+    if (source->version_id && *source->version_id != "null") {
+        return error(invalid_argument("Invalid version id specified"), request);
+    }
+    if (route.key.size() > objects::kMaxKeyBytes) return error(key_too_long(), request);
+    if (auto sse = request.header("x-amz-server-side-encryption"); sse && *sse != kSseAlgorithm) {
+        return error(not_implemented("Only SSE-S3 (AES256) server-side encryption is implemented."), request);
+    }
+    if (request.header("x-amz-checksum-algorithm")) {
+        return error(not_implemented("The x-amz-checksum-algorithm header is not implemented."), request);
+    }
+    const std::string directive(request.header("x-amz-metadata-directive").value_or("COPY"));
+    if (directive != "COPY" && directive != "REPLACE") {
+        return error(invalid_argument("Unknown metadata directive."), request);
+    }
+    const bool replace = directive == "REPLACE";
+    http::Headers metadata;
+    if (replace) {
+        metadata = objects::metadata_from(request);
+        if (objects::user_metadata_bytes(metadata) > objects::kMaxUserMetadataBytes) {
+            return error({400, "MetadataTooLarge", "Your metadata headers exceed the maximum allowed metadata size."},
+                         request);
+        }
+    }
+
+    if (!buckets::find(store, route.bucket)) return error(no_such_bucket(), request);
+    if (!buckets::find(store, source->bucket)) return error(no_such_bucket(), request);
+    auto object = objects::find(store, source->bucket, source->key);
+    if (!object) return error(no_such_key(), request);
+
+    conditions::Preconditions preconditions;
+    preconditions.if_match = request.header("x-amz-copy-source-if-match");
+    preconditions.if_unmodified_since = request.header("x-amz-copy-source-if-unmodified-since");
+    preconditions.if_none_match = request.header("x-amz-copy-source-if-none-match");
+    preconditions.if_modified_since = request.header("x-amz-copy-source-if-modified-since");
+    // Every failed copy condition is 412, including those that are 304 on GET.
+    if (conditions::evaluate(preconditions, object->etag, object->last_modified_ms, clock::now_ms()) !=
+        conditions::Outcome::Proceed) {
+        return error(precondition_failed(), request);
+    }
+
+    if (source->bucket == route.bucket && source->key == route.key && !replace) {
+        return error({400, "InvalidRequest",
+                      "This copy request is illegal because it is trying to copy an object to itself without "
+                      "changing the object's metadata, storage class, website redirect location or encryption "
+                      "attributes."},
+                     request);
+    }
+
+    // Each blob has one owner, so the copy gets a blob of its own.
+    objects::StagedBlob blob(store);
+    blob.copy_from(store.blob_path(object->blob_id));
+    object->bucket = route.bucket;
+    object->key = route.key;
+    object->size = blob.size();
+    object->last_modified_ms = clock::now_ms();
+    if (replace) object->headers = std::move(metadata);
+    object->blob_id = blob.commit();
+    std::optional<std::string> replaced;
+    objects::PutResult result;
+    try {
+        result = objects::put(store, *object, replaced);
+    } catch (...) {
+        objects::remove_blob(store, object->blob_id);
+        throw;
+    }
+    if (result == objects::PutResult::NoSuchBucket) {
+        objects::remove_blob(store, object->blob_id);
+        return error(no_such_bucket(), request);
+    }
+    if (replaced) objects::remove_blob(store, *replaced);
+
+    xml::Writer writer;
+    writer.open("CopyObjectResult", xml::kS3Namespace)
+        .element("LastModified", clock::iso8601(object->last_modified_ms))
+        .element("ETag", object->etag);
+    http::Response response = xml_response(writer.finish());
+    response.set_header("x-amz-server-side-encryption", std::string(kSseAlgorithm));
+    return response;
 }
 
 http::Response get_object(Store &store, const http::Request &request, const router::Route &route) {

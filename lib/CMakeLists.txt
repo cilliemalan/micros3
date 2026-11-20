@@ -5,6 +5,7 @@ add_library(libmicros3 STATIC
     conditions.cpp
     config.cpp
     db.cpp
+    delete_objects_handler.cpp
     digest.cpp
     handlers.cpp
     http.cpp

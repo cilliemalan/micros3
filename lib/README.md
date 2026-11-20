@@ -15,8 +15,8 @@ It is meant to implement these operations with basic support:
   - [x] GetObject
   - [x] HeadObject
   - [x] DeleteObject
-  - [ ] DeleteObjects
-  - [ ] CopyObject
+  - [x] DeleteObjects
+  - [x] CopyObject
 - Listing:
   - [x] ListObjects
   - [x] ListObjectsV2

@@ -837,3 +837,214 @@ TEST(ListApi, UrlEncodingAndXmlEscaping) {
     body = body_of(s.send("GET", "/objects?prefix=x"));
     EXPECT_TRUE(has(body, "<Key>x&lt;y&gt;&#x9;</Key>")) << body;
 }
+
+// DeleteObjects and CopyObject.
+
+namespace {
+
+std::string delete_body(const std::vector<std::string> &keys, std::optional<bool> quiet = std::nullopt) {
+    std::string body = "<Delete xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">";
+    if (quiet) body += *quiet ? "<Quiet>true</Quiet>" : "<Quiet>false</Quiet>";
+    for (const auto &key : keys) body += "<Object><Key>" + key + "</Key></Object>";
+    return body + "</Delete>";
+}
+
+std::size_t count(const std::string &text, const std::string &needle) {
+    std::size_t n = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + 1)) ++n;
+    return n;
+}
+
+} // namespace
+
+TEST(DeleteObjectsApi, VerboseQuietAndMissingKeys) {
+    ObjectServer s;
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/a%20%26b", "one"), "200"));
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/empty", ""), "200"));
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/keep", "keep"), "200"));
+
+    std::string body = delete_body({"a &amp;b", "empty", "absent"});
+    std::string response = s.send("POST", "/objects?delete", body, {{"content-md5", md5_base64(body)}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Deleted><Key>a &amp;b</Key></Deleted>")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Deleted><Key>empty</Key></Deleted>")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Deleted><Key>absent</Key></Deleted>")) << response;
+    EXPECT_FALSE(has(body_of(response), "<Error>")) << response;
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/a%20%26b"), "404"));
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/empty"), "404"));
+    EXPECT_EQ(body_of(s.send("GET", "/objects/keep")), "keep");
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(s.s3.store.blobs_dir()), {}), 1);
+
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/empty", ""), "200"));
+    body = delete_body({"empty", "absent"}, true);
+    response = s.send("POST", "/objects?delete", body, {{"content-md5", md5_base64(body)}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_FALSE(has(body_of(response), "<Deleted>")) << response;
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/empty"), "404"));
+}
+
+TEST(DeleteObjectsApi, KeyLimit) {
+    ObjectServer s;
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/existing", "x"), "200"));
+    std::vector<std::string> keys = {"existing"};
+    for (int i = 0; i < 999; ++i) keys.push_back("absent-" + std::to_string(i));
+
+    std::vector<std::string> over = keys;
+    over.push_back("extra");
+    std::string response = s.send("POST", "/objects?delete", delete_body(over));
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>MalformedXML</Code>")) << response;
+    EXPECT_EQ(body_of(s.send("GET", "/objects/existing")), "x");
+
+    response = s.send("POST", "/objects?delete", delete_body(keys));
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(count(body_of(response), "<Deleted>"), 1000u);
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/existing"), "404"));
+}
+
+TEST(DeleteObjectsApi, Errors) {
+    ObjectServer s;
+    std::string response = s.send("POST", "/missing?delete", delete_body({"k"}));
+    EXPECT_TRUE(status_is(response, "404")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << response;
+
+    for (const std::string body : {"", "<Delete/>", "<Other><Object><Key>k</Key></Object></Other>",
+                                   "<Delete><Object><VersionId>v</VersionId></Object></Delete>", "<Delete>"}) {
+        response = s.send("POST", "/objects?delete", body);
+        EXPECT_TRUE(status_is(response, "400")) << body << "\n" << response;
+        EXPECT_TRUE(has(body_of(response), "<Code>MalformedXML</Code>")) << body << "\n" << response;
+    }
+
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/k", "x"), "200"));
+    const std::string body = delete_body({"k"});
+    response = s.send("POST", "/objects?delete", body, {{"content-md5", md5_base64("other")}});
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>BadDigest</Code>")) << response;
+    EXPECT_EQ(body_of(s.send("GET", "/objects/k")), "x");
+
+    // Only the null version exists.
+    response = s.send("POST", "/objects?delete",
+                      "<Delete><Object><Key>k</Key><VersionId>abc</VersionId></Object></Delete>");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Error><Key>k</Key><VersionId>abc</VersionId><Code>NoSuchVersion</Code>"))
+        << response;
+    EXPECT_EQ(body_of(s.send("GET", "/objects/k")), "x");
+}
+
+TEST(CopyObjectApi, CopyAndReplaceMetadata) {
+    ObjectServer s;
+    ASSERT_TRUE(status_is(s.send("PUT", "/dest"), "200"));
+    const std::string body("\0\1\x7F\x80\xFE\xFF", 6);
+    const std::string source = "/objects/nested/%E9%9B%AA%20%2B%26%25%3F%23.bin";
+    ASSERT_TRUE(status_is(s.send("PUT", source, body,
+                                 {{"content-type", "application/octet-stream"},
+                                  {"cache-control", "max-age=123"},
+                                  {"x-amz-meta-purpose", "copy"}}),
+                          "200"));
+    ASSERT_TRUE(status_is(s.send("PUT", "/dest/copy", "old", {{"x-amz-meta-stale", "yes"}}), "200"));
+
+    // COPY keeps the source metadata; the copy source may start with a slash.
+    std::string response = s.send("PUT", "/dest/copy", "", {{"x-amz-copy-source", source}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_TRUE(has(body_of(response), "<ETag>&quot;" + quoted_md5(body).substr(1, 32) + "&quot;</ETag>")) << response;
+    EXPECT_TRUE(std::regex_search(body_of(response),
+                                  std::regex("<LastModified>\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\d\\.\\d{3}Z</LastModified>")))
+        << response;
+    EXPECT_EQ(header_value(response, "x-amz-server-side-encryption"), "AES256");
+    response = s.send("GET", "/dest/copy");
+    EXPECT_EQ(body_of(response), body);
+    EXPECT_EQ(header_value(response, "ETag"), quoted_md5(body));
+    EXPECT_EQ(header_value(response, "Content-Type"), "application/octet-stream");
+    EXPECT_EQ(header_value(response, "Cache-Control"), "max-age=123");
+    EXPECT_EQ(header_value(response, "x-amz-meta-purpose"), "copy");
+    EXPECT_EQ(header_value(response, "x-amz-meta-stale"), "<missing>");
+
+    // REPLACE keeps only the metadata the request supplies.
+    response = s.send("PUT", "/dest/copy", "",
+                      {{"x-amz-copy-source", source.substr(1)},
+                       {"x-amz-metadata-directive", "REPLACE"},
+                       {"content-type", "text/plain"},
+                       {"x-amz-meta-revision", "two"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    response = s.send("GET", "/dest/copy");
+    EXPECT_EQ(body_of(response), body);
+    EXPECT_EQ(header_value(response, "Content-Type"), "text/plain");
+    EXPECT_EQ(header_value(response, "Cache-Control"), "<missing>");
+    EXPECT_EQ(header_value(response, "x-amz-meta-purpose"), "<missing>");
+    EXPECT_EQ(header_value(response, "x-amz-meta-revision"), "two");
+
+    // A self-copy needs REPLACE.
+    response = s.send("PUT", "/dest/copy", "", {{"x-amz-copy-source", "dest/copy"}});
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>InvalidRequest</Code>")) << response;
+    response = s.send("PUT", "/dest/copy", "",
+                      {{"x-amz-copy-source", "dest/copy"}, {"x-amz-metadata-directive", "REPLACE"},
+                       {"cache-control", "no-cache"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    response = s.send("GET", "/dest/copy");
+    EXPECT_EQ(body_of(response), body);
+    EXPECT_EQ(header_value(response, "Cache-Control"), "no-cache");
+    EXPECT_EQ(header_value(response, "Content-Type"), "binary/octet-stream");
+
+    // Each copy owns its blob: overwriting or deleting the source leaves it.
+    ASSERT_TRUE(status_is(s.send("PUT", source, "new source"), "200"));
+    EXPECT_TRUE(status_is(s.send("DELETE", source), "204"));
+    EXPECT_EQ(body_of(s.send("GET", "/dest/copy")), body);
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(s.s3.store.blobs_dir()), {}), 1);
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.staging_dir()));
+}
+
+TEST(CopyObjectApi, EmptyObjectAndMissingSources) {
+    ObjectServer s;
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/empty", ""), "200"));
+    std::string response = s.send("PUT", "/objects/empty-copy", "", {{"x-amz-copy-source", "objects/empty"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    response = s.send("GET", "/objects/empty-copy");
+    EXPECT_EQ(header_value(response, "Content-Length"), "0");
+    EXPECT_EQ(header_value(response, "ETag"), "\"d41d8cd98f00b204e9800998ecf8427e\"");
+
+    response = s.send("PUT", "/objects/d", "", {{"x-amz-copy-source", "objects/absent"}});
+    EXPECT_TRUE(status_is(response, "404")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>NoSuchKey</Code>")) << response;
+    response = s.send("PUT", "/objects/d", "", {{"x-amz-copy-source", "missing/empty"}});
+    EXPECT_TRUE(status_is(response, "404")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << response;
+    response = s.send("PUT", "/missing/d", "", {{"x-amz-copy-source", "objects/empty"}});
+    EXPECT_TRUE(status_is(response, "404")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << response;
+    response = s.send("PUT", "/objects/d", "", {{"x-amz-copy-source", "objects"}});
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>InvalidArgument</Code>")) << response;
+    response = s.send("PUT", "/objects/d", "",
+                      {{"x-amz-copy-source", "objects/empty"}, {"x-amz-metadata-directive", "MERGE"}});
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(status_is(s.send("GET", "/objects/d"), "404"));
+}
+
+TEST(CopyObjectApi, SourceConditions) {
+    ObjectServer s;
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/src", "source"), "200"));
+    const std::string etag = quoted_md5("source");
+    const std::string last_modified = header_value(s.send("HEAD", "/objects/src"), "Last-Modified");
+    const std::string before = "Mon, 01 Jan 2024 00:00:00 GMT";
+    const std::vector<std::pair<micros3::http::Headers, std::string>> cases = {
+        {{{"x-amz-copy-source-if-modified-since", before}}, "200"},
+        {{{"x-amz-copy-source-if-modified-since", last_modified}}, "412"},
+        {{{"x-amz-copy-source-if-unmodified-since", last_modified}}, "200"},
+        {{{"x-amz-copy-source-if-unmodified-since", before}}, "412"},
+        {{{"x-amz-copy-source-if-match", etag}, {"x-amz-copy-source-if-unmodified-since", before}}, "200"},
+        {{{"x-amz-copy-source-if-match", "\"other\""}, {"x-amz-copy-source-if-unmodified-since", last_modified}},
+         "412"},
+        {{{"x-amz-copy-source-if-none-match", etag}, {"x-amz-copy-source-if-modified-since", before}}, "412"},
+        {{{"x-amz-copy-source-if-none-match", "\"other\""}}, "200"},
+    };
+    for (const auto &[conditions, expected] : cases) {
+        ASSERT_TRUE(status_is(s.send("PUT", "/objects/dest", "sentinel"), "200"));
+        micros3::http::Headers headers = {{"x-amz-copy-source", "objects/src"}};
+        headers.insert(headers.end(), conditions.begin(), conditions.end());
+        const std::string response = s.send("PUT", "/objects/dest", "", headers);
+        EXPECT_TRUE(status_is(response, expected)) << conditions.front().first << "\n" << response;
+        EXPECT_EQ(body_of(s.send("GET", "/objects/dest")), expected == "200" ? "source" : "sentinel");
+        if (expected == "412") EXPECT_TRUE(has(body_of(response), "<Code>PreconditionFailed</Code>")) << response;
+    }
+}

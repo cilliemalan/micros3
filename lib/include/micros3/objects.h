@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace micros3::objects {
 
@@ -61,6 +62,10 @@ enum class DeleteResult { Deleted, NoSuchBucket };
 // Deletes the object row, then its blob file. A missing key counts as deleted.
 DeleteResult remove(Store &store, std::string_view bucket, std::string_view key);
 
+// Deletes the object rows for `keys` in one transaction, then their blob
+// files. Missing keys count as deleted.
+DeleteResult remove_many(Store &store, std::string_view bucket, const std::vector<std::string> &keys);
+
 // A new random blob id: 32 lowercase hex characters.
 std::string new_blob_id();
 
@@ -80,6 +85,9 @@ public:
 
     // Appends to the file. Throws std::system_error on failure.
     void write(std::string_view data);
+    // Appends the whole of the file at `path`. Throws std::system_error on
+    // failure.
+    void copy_from(const std::filesystem::path &path);
     std::uint64_t size() const { return size_; }
     const std::string &id() const { return id_; }
 

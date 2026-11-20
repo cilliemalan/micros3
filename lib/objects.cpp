@@ -163,6 +163,26 @@ DeleteResult remove(Store &store, std::string_view bucket, std::string_view key)
     return DeleteResult::Deleted;
 }
 
+DeleteResult remove_many(Store &store, std::string_view bucket, const std::vector<std::string> &keys) {
+    std::vector<std::string> blobs;
+    {
+        db::Transaction txn(store.db());
+        {
+            db::Statement exists = store.db().prepare("SELECT 1 FROM buckets WHERE name = ?");
+            exists.bind_text(1, bucket);
+            if (!exists.step()) return DeleteResult::NoSuchBucket;
+        }
+        for (const std::string &key : keys) {
+            db::Statement old = store.db().prepare("DELETE FROM objects WHERE bucket = ? AND key = ? RETURNING blob_id");
+            old.bind_text(1, bucket).bind_blob(2, key);
+            while (old.step()) blobs.push_back(old.column_text(0));
+        }
+        txn.commit();
+    }
+    for (const std::string &blob : blobs) remove_blob(store, blob);
+    return DeleteResult::Deleted;
+}
+
 std::string new_blob_id() {
     thread_local std::mt19937_64 engine{[] {
         std::random_device device;
@@ -202,6 +222,38 @@ void StagedBlob::write(std::string_view data) {
         }
         data.remove_prefix(static_cast<std::size_t>(n));
         size_ += static_cast<std::uint64_t>(n);
+    }
+}
+
+void StagedBlob::copy_from(const std::filesystem::path &path) {
+    const int in = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (in < 0) throw_errno("open " + path.string());
+    struct Closer {
+        int fd;
+        ~Closer() { ::close(fd); }
+    } closer{in};
+    // copy_file_range lets the file system share or copy the data in the
+    // kernel. Fall back to read and write where it is not supported.
+    for (;;) {
+        const ssize_t n = ::copy_file_range(in, nullptr, fd_, nullptr, 1 << 30, 0);
+        if (n > 0) {
+            size_ += static_cast<std::uint64_t>(n);
+            continue;
+        }
+        if (n == 0) return;
+        if (errno == EINTR) continue;
+        if (errno == EXDEV || errno == ENOSYS || errno == EOPNOTSUPP || errno == EINVAL) break;
+        throw_errno("copy " + path.string());
+    }
+    std::string buffer(1 << 20, '\0');
+    for (;;) {
+        const ssize_t n = ::read(in, buffer.data(), buffer.size());
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            throw_errno("read " + path.string());
+        }
+        if (n == 0) return;
+        write(std::string_view(buffer.data(), static_cast<std::size_t>(n)));
     }
 }
 

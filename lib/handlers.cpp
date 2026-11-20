@@ -48,6 +48,11 @@ std::unique_ptr<http::Exchange> begin(Store &store, const http::Request &request
     case Operation::GetObject: return ignoring_body(&get_object);
     case Operation::HeadObject: return ignoring_body(&head_object);
     case Operation::DeleteObject: return ignoring_body(&delete_object);
+    case Operation::CopyObject: return ignoring_body(&copy_object);
+    case Operation::DeleteObjects:
+        return buffered([](Store &s, const http::Request &q, const router::Route &r, const std::string &body) {
+            return delete_objects(s, q, r, body);
+        });
     default: return nullptr;
     }
 }
