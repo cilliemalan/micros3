@@ -81,7 +81,7 @@ test('runner awaits checks in order, reports failures, and continues', async () 
     ] },
   ];
 
-  assert.deepEqual(await runTests(suites, context, output), { passed: 2, failed: 2 });
+  assert.deepEqual(await runTests(suites, context, output), { passed: 2, failed: 2, notRun: 0 });
   assert.deepEqual(events, ['start', 'finish', 'sync', 'async', 'last']);
   assert.deepEqual(lines, [
     '\nFirst:',
@@ -312,4 +312,33 @@ test('verifier environment variables take precedence over the env file', async t
   assert.equal(fileOnly.stdout.split('\n')[0],
     `Target: ${fromFile.endpoint} (from AWS_ENDPOINT_URL), region eu-west-1`);
   assert.equal(fromFile.requests.length, 1);
+});
+
+test('verifier validates and reports its timeouts before the first request', async t => {
+  const { endpoint, requests } = await startDeniedServer(t);
+  const env = verifierEnvironment({ AWS_ENDPOINT_URL: endpoint, AWS_DEFAULT_REGION: 'us-east-1' });
+
+  const invalid = await runVerifier(['--run-timeout', '0'], env);
+  assert.equal(invalid.code, 1);
+  assert.match(invalid.stderr, /--run-timeout must be a positive number of seconds/);
+  assert.doesNotMatch(invalid.stdout, /Target:|Results:/);
+  assert.equal(requests.length, 0);
+
+  const result = await runVerifier(
+    ['--request-timeout', '5', '--run-timeout', '60', '--cleanup-grace', '2.5'], env);
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout.split('\n')[1],
+    'Timeouts: 5 s per request, 60 s per run, 2.5 s cleanup grace');
+  assert.equal(requests.length, 1);
+});
+
+test('verifier times out a hung connection check', async t => {
+  const endpoint = await startServer(t, () => {});
+  const started = Date.now();
+  const result = await runVerifier(['--endpoint', endpoint, '--request-timeout', '0.3'],
+    verifierEnvironment({ AWS_DEFAULT_REGION: 'us-east-1' }));
+  assert.equal(result.signal, null);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /ListBuckets timed out after 300 ms\nInitial check failed/);
+  assert.ok(Date.now() - started < 10_000);
 });

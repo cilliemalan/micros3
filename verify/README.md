@@ -87,6 +87,19 @@ ignored, and `--aws` combined with an endpoint is rejected as ambiguous. The
 selected target, its source and the region are printed before any request is
 made.
 
+Requests and the run as a whole are bounded. `--request-timeout <seconds>`
+(default 30) limits each request, including SDK retries and reading a response
+body. `--run-timeout <seconds>` (default 1800) limits the run: checks not yet
+started are reported as `NOT RUN` and fail the run, and the requests of a check
+in progress are cancelled. Cleanup requests are exempt from the run timeout
+(but not the request timeout) for a further `--cleanup-grace <seconds>`
+(default 120), so an interrupted check still removes its resources or reports
+them by name. A check that has not finished cleaning up by then is abandoned
+and reported as a failure whose resources may remain. A timed-out request is
+never treated as proof that a resource is missing: an uncertain bucket
+creation is still cleaned up, and a bucket is retained when its multipart
+uploads cannot be listed and aborted.
+
 `pnpm start` is an alias for the verifier and accepts the same options.
 The bucket, object, listing, multipart, CORS and encryption checks create uniquely
 named buckets and temporary objects, uploads or CORS configurations. Object keys

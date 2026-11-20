@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { CreateBucketCommand, DeleteBucketCommand, HeadBucketCommand } from '@aws-sdk/client-s3';
+import { inCleanup } from '../timeouts.js';
 
 // Bucket names are global on AWS, so never reuse a name or delete a known collision.
 export function bucketName() {
@@ -21,6 +22,7 @@ export function creationRejected(error) {
 }
 
 // Preserve the original failure when cleanup fails too; the runner reports messages.
+// Cleanup runs in the cleanup scope so it continues past the run timeout.
 export async function withCleanup(action, cleanup, resource) {
   let failure;
   let failed = false;
@@ -32,7 +34,7 @@ export async function withCleanup(action, cleanup, resource) {
     throw error;
   } finally {
     try {
-      await cleanup();
+      await inCleanup(cleanup);
     } catch (error) {
       if (failed) {
         throw new AggregateError([failure, error], `${message(failure)}; cleanup failed for ${resource}: ${message(error)}`);

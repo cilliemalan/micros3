@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import { S3Client } from '@aws-sdk/client-s3';
 import { runVerification } from './verification.js';
 import { TargetError, describeTarget, resolveTarget } from './target.js';
+import { resolveTimeouts } from './timeouts.js';
 import bucketTests from './checks/bucket.js';
 import objectTests from './checks/object.js';
 import listingTests from './checks/listing.js';
@@ -17,6 +18,9 @@ function parseOptions() {
         env: { type: 'string', short: 'e' },
         endpoint: { type: 'string' },
         aws: { type: 'boolean', default: false },
+        'request-timeout': { type: 'string' },
+        'run-timeout': { type: 'string' },
+        'cleanup-grace': { type: 'string' },
       },
     }).values;
   } catch (error) {
@@ -50,6 +54,18 @@ function selectTarget(options) {
   }
 }
 
+function selectTimeouts(options) {
+  try {
+    return resolveTimeouts(options);
+  } catch (error) {
+    if (error instanceof RangeError) {
+      console.error(error.message);
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 async function resolveRegion(client) {
   try {
     return await client.config.region();
@@ -68,8 +84,9 @@ const suites = [
 ];
 
 const options = parseOptions();
+const timeouts = options && selectTimeouts(options);
 
-if (!options) {
+if (!options || !timeouts) {
   process.exitCode = 1;
 } else if (!loadEnvFile(options.env)) {
   console.error('Failed to load environment file');
@@ -92,7 +109,9 @@ if (!options) {
     });
 
     console.log(describeTarget(target, await resolveRegion(client)));
-    if (!await runVerification(client, suites)) {
+    console.log(`Timeouts: ${timeouts.requestTimeout / 1000} s per request, ` +
+      `${timeouts.runTimeout / 1000} s per run, ${timeouts.cleanupGrace / 1000} s cleanup grace`);
+    if (!await runVerification(client, suites, console, timeouts)) {
       process.exitCode = 1;
     }
   }

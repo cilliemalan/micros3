@@ -140,9 +140,18 @@ CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload
       `AWS_ENDPOINT_URL_S3`, then `AWS_ENDPOINT_URL`; otherwise `--aws` is
       required (and ignores shared-config `endpoint_url`). The target is printed
       before the connection check.
-- [ ] Add bounded request and run timeouts with cleanup-aware cancellation and
+- [x] Add bounded request and run timeouts with cleanup-aware cancellation and
       tests for hung requests. Preserve resource identifiers and the current
       conservative multipart cleanup behavior when completion is uncertain.
+      [timeouts.js](../verify/timeouts.js) bounds every request (including SDK
+      retries and body reads; `--request-timeout`, default 30 s) and the run
+      (`--run-timeout`, default 30 min). At the run deadline, check requests
+      are cancelled and unstarted checks reported `NOT RUN`; cleanup inside
+      `withCleanup` continues for `--cleanup-grace` (default 2 min), after
+      which a check is abandoned and reported. Timeout errors carry no HTTP
+      status, so uncertain creations are still cleaned up and buckets whose
+      uploads cannot be listed are retained. Real-SDK hung-server tests are in
+      [timeouts.test.js](../verify/test/timeouts.test.js).
 
 ## Setup and cleanup
 
