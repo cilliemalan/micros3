@@ -105,12 +105,12 @@ All are recorded in design.md. Nothing here is open.
 
 ## Phase 7: CORS configuration
 
-- [ ] PutBucketCors: parse `CORSConfiguration`. Reject unsupported methods, a missing origin or method, an empty configuration, and more than 100 rules, each as `MalformedXML` (400). Check `cors.js` for the expected code. Store the rules in order.
-- [ ] GetBucketCors: the stored configuration. No configuration returns `NoSuchCORSConfiguration` (404).
-- [ ] DeleteBucketCors: 204, including on repeat. Missing bucket returns `NoSuchBucket`.
-- [ ] Each bucket has its own configuration.
+- [x] PutBucketCors: parse `CORSConfiguration`. Reject unsupported methods, a missing origin or method, an empty configuration, and more than 100 rules, each as `MalformedXML` (400). Check `cors.js` for the expected code. Store the rules in order. (`cors.js` checks only the 400. `cors::parse` in `lib/cors.cpp` follows S3: an unsupported method (case-sensitive), or an origin or header with more than one `*`, is `InvalidRequest`; the other cases, plus unknown or repeated elements and a bad `MaxAgeSeconds`, are `MalformedXML`. `Content-MD5` and the CRC32 and SHA-256 checksums are checked when present, through `check_body_digests`, now shared with DeleteObjects. The validated configuration is rewritten by `cors::to_xml` and stored in `buckets.cors_xml`.)
+- [x] GetBucketCors: the stored configuration. No configuration returns `NoSuchCORSConfiguration` (404).
+- [x] DeleteBucketCors: 204, including on repeat. Missing bucket returns `NoSuchBucket`.
+- [x] Each bucket has its own configuration.
 
-**Checks:** `cors.js`.
+**Checks:** `cors.js`. (On 2026-11-20, all eight `cors.js` checks passed. Tests in `test/cors_test.cpp` and `test/server_test.cpp`.)
 
 ## Phase 8: Multipart
 

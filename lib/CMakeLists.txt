@@ -4,6 +4,8 @@ add_library(libmicros3 STATIC
     clock.cpp
     conditions.cpp
     config.cpp
+    cors.cpp
+    cors_handlers.cpp
     db.cpp
     delete_objects_handler.cpp
     digest.cpp

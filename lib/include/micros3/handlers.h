@@ -8,6 +8,7 @@
 #include "micros3/store.h"
 
 #include <memory>
+#include <optional>
 #include <string_view>
 
 namespace micros3::handlers {
@@ -40,6 +41,16 @@ http::Response copy_object(Store &store, const http::Request &request, const rou
 // DeleteObjects (delete_objects_handler.cpp). `body` is the whole request body.
 http::Response delete_objects(Store &store, const http::Request &request, const router::Route &route,
                               std::string_view body);
+
+// Bucket CORS configuration (cors_handlers.cpp). `body` is the whole request body.
+http::Response put_bucket_cors(Store &store, const http::Request &request, const router::Route &route,
+                               std::string_view body);
+http::Response get_bucket_cors(Store &store, const http::Request &request, const router::Route &route);
+http::Response delete_bucket_cors(Store &store, const http::Request &request, const router::Route &route);
+
+// Checks Content-MD5 and the CRC32 and SHA-256 checksum headers, when present,
+// against a buffered body. Other checksum algorithms are not checked.
+std::optional<S3Error> check_body_digests(const http::Request &request, std::string_view body);
 
 // A 200 response with an XML body.
 http::Response xml_response(std::string body);

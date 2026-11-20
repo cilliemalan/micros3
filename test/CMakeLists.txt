@@ -2,6 +2,7 @@ add_executable(testmicros3
     buckets_test.cpp
     conditions_test.cpp
     config_test.cpp
+    cors_test.cpp
     digest_test.cpp
     listing_test.cpp
     deps_test.cpp

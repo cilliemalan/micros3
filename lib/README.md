@@ -28,9 +28,9 @@ It is meant to implement these operations with basic support:
   - [ ] ListMultipartUploads
   - [ ] ListParts
 - CORS:
-  - [ ] PutBucketCors
-  - [ ] GetBucketCors
-  - [ ] DeleteBucketCors
+  - [x] PutBucketCors
+  - [x] GetBucketCors
+  - [x] DeleteBucketCors
 - Encryption:
   - [x] GetBucketEncryption
 

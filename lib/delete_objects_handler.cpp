@@ -1,7 +1,6 @@
 // DeleteObjects: several keys in one request, with a result for each.
 
 #include "micros3/buckets.h"
-#include "micros3/digest.h"
 #include "micros3/handlers.h"
 #include "micros3/objects.h"
 #include "micros3/xml.h"
@@ -72,46 +71,12 @@ std::variant<DeleteRequest, S3Error> parse(std::string_view body) {
     return out;
 }
 
-// Checks Content-MD5 and the CRC32 and SHA-256 checksum headers against the
-// body. Other checksum algorithms are not checked.
-std::optional<S3Error> check_digests(const http::Request &request, std::string_view body) {
-    if (auto value = request.header("content-md5")) {
-        auto decoded = digest::base64_decode(*value);
-        if (!decoded || decoded->size() != 16) return invalid_digest();
-        const auto md5 = digest::md5(body);
-        if (*decoded != std::string_view(reinterpret_cast<const char *>(md5.data()), md5.size())) return bad_digest();
-    }
-    if (auto value = request.header("x-amz-checksum-crc32")) {
-        auto decoded = digest::base64_decode(*value);
-        if (!decoded || decoded->size() != 4) {
-            return S3Error{400, "InvalidRequest", "Value for x-amz-checksum-crc32 header is invalid."};
-        }
-        digest::Crc32 crc;
-        crc.update(body);
-        const auto bytes = crc.bytes();
-        if (*decoded != std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size())) {
-            return bad_digest("The CRC32 you specified did not match the calculated checksum.");
-        }
-    }
-    if (auto value = request.header("x-amz-checksum-sha256")) {
-        auto decoded = digest::base64_decode(*value);
-        if (!decoded || decoded->size() != 32) {
-            return S3Error{400, "InvalidRequest", "Value for x-amz-checksum-sha256 header is invalid."};
-        }
-        const auto sha = digest::sha256(body);
-        if (*decoded != std::string_view(reinterpret_cast<const char *>(sha.data()), sha.size())) {
-            return bad_digest("The SHA256 you specified did not match the calculated checksum.");
-        }
-    }
-    return std::nullopt;
-}
-
 } // namespace
 
 http::Response delete_objects(Store &store, const http::Request &request, const router::Route &route,
                               std::string_view body) {
     if (!buckets::find(store, route.bucket)) return http::error_response(no_such_bucket(), request);
-    if (auto e = check_digests(request, body)) return http::error_response(*e, request);
+    if (auto e = check_body_digests(request, body)) return http::error_response(*e, request);
     auto parsed = parse(body);
     if (auto *e = std::get_if<S3Error>(&parsed)) return http::error_response(*e, request);
     const DeleteRequest &del = std::get<DeleteRequest>(parsed);

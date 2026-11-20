@@ -1048,3 +1048,62 @@ TEST(CopyObjectApi, SourceConditions) {
         if (expected == "412") EXPECT_TRUE(has(body_of(response), "<Code>PreconditionFailed</Code>")) << response;
     }
 }
+
+namespace {
+
+const std::string kCorsRules =
+    "<CORSConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
+    "<CORSRule><ID>read</ID><AllowedOrigin>https://app.example.com</AllowedOrigin>"
+    "<AllowedMethod>GET</AllowedMethod><MaxAgeSeconds>3600</MaxAgeSeconds></CORSRule>"
+    "<CORSRule><AllowedOrigin>*</AllowedOrigin><AllowedMethod>PUT</AllowedMethod></CORSRule>"
+    "</CORSConfiguration>";
+
+} // namespace
+
+TEST(CorsApi, PutGetDelete) {
+    ObjectServer s;
+    std::string response = s.send("GET", "/objects?cors");
+    EXPECT_TRUE(status_is(response, "404")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>NoSuchCORSConfiguration</Code>")) << response;
+
+    response = s.send("PUT", "/objects?cors", kCorsRules, {{"content-md5", md5_base64(kCorsRules)}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    response = s.send("GET", "/objects?cors");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "Content-Type"), "application/xml");
+    EXPECT_TRUE(has(body_of(response),
+                    "<CORSConfiguration xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><CORSRule><ID>read</ID>"
+                    "<AllowedMethod>GET</AllowedMethod><AllowedOrigin>https://app.example.com</AllowedOrigin>"
+                    "<MaxAgeSeconds>3600</MaxAgeSeconds></CORSRule><CORSRule><AllowedMethod>PUT</AllowedMethod>"
+                    "<AllowedOrigin>*</AllowedOrigin></CORSRule></CORSConfiguration>"))
+        << response;
+
+    // Other buckets are unaffected.
+    ASSERT_TRUE(status_is(s.send("PUT", "/second"), "200"));
+    EXPECT_TRUE(status_is(s.send("GET", "/second?cors"), "404"));
+
+    response = s.send("DELETE", "/objects?cors");
+    EXPECT_TRUE(status_is(response, "204")) << response;
+    EXPECT_TRUE(status_is(s.send("GET", "/objects?cors"), "404"));
+    EXPECT_TRUE(status_is(s.send("DELETE", "/objects?cors"), "204"));
+}
+
+TEST(CorsApi, Errors) {
+    ObjectServer s;
+    for (const auto &[method, body] : std::vector<std::pair<std::string, std::string>>{
+             {"PUT", kCorsRules}, {"GET", ""}, {"DELETE", ""}}) {
+        const std::string response = s.send(method, "/missing?cors", body);
+        EXPECT_TRUE(status_is(response, "404")) << method << "\n" << response;
+        EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << method << "\n" << response;
+    }
+
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects?cors", kCorsRules), "200"));
+    std::string response = s.send("PUT", "/objects?cors", "<CORSConfiguration/>");
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>MalformedXML</Code>")) << response;
+    response = s.send("PUT", "/objects?cors", kCorsRules, {{"content-md5", md5_base64("other")}});
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>BadDigest</Code>")) << response;
+    // A rejected configuration leaves the stored one in place.
+    EXPECT_TRUE(has(body_of(s.send("GET", "/objects?cors")), "<ID>read</ID>"));
+}
