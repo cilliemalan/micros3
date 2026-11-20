@@ -62,5 +62,4 @@ FetchContent_MakeAvailable(googletest)
 
 add_subdirectory(lib)
 add_subdirectory(src)
-add_subdirectory(verification)
 add_subdirectory(test)
