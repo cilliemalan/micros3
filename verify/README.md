@@ -11,8 +11,11 @@ checks cover bucket creation, listing, existence, location and deletion,
 including invalid names, repeat creation, missing buckets and non-empty buckets.
 Both object-listing APIs are checked for ordered keys and metadata, empty and
 missing buckets, prefixes, delimiters, and pagination (including rolled-up
-prefixes). The other operation checks are still failing stubs. A connection error
-stops the run, and any connection or check failure gives a nonzero exit status.
+prefixes). CORS configuration checks cover multiple ordered rules and their
+fields, replacement, bucket isolation, the 100-rule limit, invalid inputs, and
+missing configurations and buckets. The other operation checks are still failing
+stubs. A connection error stops the run, and any connection or check failure
+gives a nonzero exit status.
 
 Install Node.js 20 or newer and pnpm, then install dependencies and run the program:
 
@@ -40,19 +43,21 @@ environment file.
 `pnpm start` is an alias for the verifier and accepts the same options. Without
 a custom endpoint, the AWS SDK uses its default AWS S3 endpoint and credentials,
 so ensure the intended endpoint and credentials are configured before running.
-The bucket and listing checks create uniquely named buckets and temporary
-objects. They attempt cleanup even after failures; cleanup errors identify the
-affected resources, which may need manual removal. A rejected creation is not
-cleaned up when the response could indicate a bucket owned by someone else; after
-an ambiguous SDK retry, manually inspect the named bucket. The repeat-creation and
+The bucket, listing and CORS checks create uniquely named buckets and temporary
+objects or CORS configurations. They attempt cleanup even after failures;
+cleanup errors identify the affected resources, which may need manual removal.
+A rejected creation is not cleaned up when the response could indicate a bucket
+owned by someone else; after an ambiguous SDK retry, manually inspect the named
+bucket. The repeat-creation and
 non-empty deletion checks also require PutObject, GetObject and DeleteObject
 support. The object listing checks require PutObject and DeleteObject support.
 The bucket listing check follows up to 1,000 pages when looking for its two test
 buckets.
 
-The configured Floci instance currently accepts invalid bucket names, so the
-invalid-name check fails against it. The check is retained to verify S3 naming
-rules.
+The configured Floci instance currently accepts invalid bucket names and invalid
+CORS configurations, so those checks fail against it. They are retained to
+verify S3's validation rules. The CORS checks verify configuration APIs; they do
+not test HTTP preflight or response headers.
 
 ## Implementing checks
 
@@ -63,6 +68,6 @@ continues after failures, so each implemented test should manage its own setup,
 use isolated resource names, and clean up resources in `finally` even if an
 assertion fails. Add new sections to the suite list in `index.js`.
 
-Run `pnpm test:unit` to test the runner, startup behavior, bucket checks and
-listing checks offline using mock services. This does not run the S3 operation
+Run `pnpm test:unit` to test the runner, startup behavior, bucket, listing and
+CORS checks offline using mock services. This does not run the S3 operation
 checks against a real endpoint.
