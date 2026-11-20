@@ -31,6 +31,11 @@ and neighboring keys, non-destructive initiation, independent completion and
 metadata, and a missing bucket. UploadPart checks binary and empty parts,
 out-of-order uploads, replacement, part number bounds, ETags, isolation,
 assembled content, and missing, completed or aborted uploads and buckets.
+ListMultipartUploads checks empty and missing buckets, upload identities, initiation
+timestamps and storage class, key ordering, prefix and delimiter filtering, URL
+encoding, marker pagination across same-key uploads and common prefixes, bucket
+isolation, and removal after abort and completion. Owner and initiator identity,
+permissions, versioning, and directory buckets are not exercised.
 CompleteMultipartUpload checks selected parts and assembly, empty objects, response
 and metadata, overwriting an object, independent uploads across keys and buckets,
 invalid part order, ETags, missing parts and undersized non-final parts, recovery
@@ -44,8 +49,7 @@ CompleteMultipartUpload and AbortMultipartUpload support. CORS configuration che
 fields, replacement, bucket isolation, the 100-rule limit, invalid inputs, and
 missing configurations and buckets. Encryption checks verify the SSE-S3 default
 configuration on a newly created bucket and the missing-bucket error. Changing
-encryption configuration is outside the planned scope. The other operation
-checks are still failing stubs. A connection error stops the run, and any
+encryption configuration is outside the planned scope. A connection error stops the run, and any
 connection or check failure gives a nonzero exit status.
 
 Install Node.js 20 or newer and pnpm, then install dependencies and run the program:
@@ -75,7 +79,7 @@ environment file.
 a custom endpoint, the AWS SDK uses its default AWS S3 endpoint and credentials,
 so ensure the intended endpoint and credentials are configured before running.
 The bucket, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
-listing, multipart creation, part upload, completion and abort, CORS and encryption checks create uniquely named buckets and temporary
+listing, multipart creation, part upload, upload listing, completion and abort, CORS and encryption checks create uniquely named buckets and temporary
 objects, uploads or CORS configurations. They attempt cleanup even after failures;
 cleanup errors identify the affected resources, which may need manual removal.
 A rejected creation is not cleaned up when the response could indicate a bucket
@@ -94,7 +98,7 @@ lost or retried creation responses; listing failures may require manual cleanup.
 The configured Floci instance currently accepts invalid bucket names, invalid
 CORS configurations and DeleteObjects requests with more than 1,000 keys; its
 CopyObject metadata replacement also retains old headers. Multipart listings omit
-`IsTruncated`, preventing the multipart creation, part upload, completion and abort checks and leaving cleanup unable
+`IsTruncated`, preventing the multipart creation, part upload, upload listing, completion and abort checks and leaving cleanup unable
 to confirm that every upload was discovered. Floci also accepts a completion with an undersized non-final part. When the flag is normalized for
 investigation, Floci also loses the initiation's Cache-Control on completion and
 returns NoSuchUpload instead of NoSuchBucket when aborting or uploading a part in a missing bucket.
@@ -104,14 +108,14 @@ response headers.
 
 ## Implementing checks
 
-The stubs are grouped by operation in `checks/`. Each test has a name and a
-`run({ client })` function, which may be asynchronous. Replace the exception with
-checks that throw on failure, for example using `node:assert/strict`. The runner
+Checks are grouped by operation in `checks/`. Each test has a name and a
+`run({ client })` function, which may be asynchronous. Checks throw on failure,
+for example using `node:assert/strict`. The runner
 continues after failures, so each implemented test should manage its own setup,
 use isolated resource names, and clean up resources in `finally` even if an
 assertion fails. Add new sections to the suite list in `index.js`.
 
 Run `pnpm test:unit` to test the runner, startup behavior, bucket, PutObject,
-GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects, listing, multipart creation, part upload, completion and abort, CORS and encryption
+GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects, listing, multipart creation, part upload, upload listing, completion and abort, CORS and encryption
 checks offline using mock services. This does not run the S3
 operation checks against a real endpoint.
