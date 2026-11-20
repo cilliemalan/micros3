@@ -123,7 +123,7 @@ export function applyTimeouts(client, { requestTimeout = DEFAULT_REQUEST_TIMEOUT
   return client;
 }
 
-// Bounds a request made outside the SDK (such as an unsigned CORS preflight)
+// Bounds a request made outside the SDK (such as a raw HTTP request)
 // like one made through a client passed to applyTimeouts. `request(signal)`
 // must finish reading the response before it resolves. Without applied
 // timeouts the request is unbounded and receives no signal.
