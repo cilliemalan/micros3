@@ -13,17 +13,18 @@ region supplied by `floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket,
 object listing, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
-CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMultipartUpload, AbortMultipartUpload, CORS configuration, encryption, and ETag/checksum integrity checks and URL-encoded listings of special keys are implemented. The checked boxes below mean a check exists, not that every S3 behavior has been covered or that the check passes against Floci or AWS. See the follow-up work below.
+CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMultipartUpload, AbortMultipartUpload, CORS configuration and behavior, encryption, and ETag/checksum integrity checks and URL-encoded listings of special keys are implemented. The checked boxes below mean a check exists, not that every S3 behavior has been covered or that the check passes against Floci or AWS. See the follow-up work below.
 
 ## Verification review and follow-up
 
 ### Results and limitations
 
-- The offline suite passed all 153 tests (`npm run test:unit`). The configured
-  Floci run (`npm test -- -e floci.env`) reported 20 passes and 13 failures.
-  A check stops at its first assertion failure, so this is not a count of all
-  defects or proof that later scenarios passed. The six buckets retained by this
-  run listed no uploads or objects and were manually removed afterward. Because
+- The offline suite passed all 222 tests (`npm run test:unit`). The configured
+  Floci run (`npm test -- -e floci.env`) on 2026-11-20 reported 25 passes and
+  18 failures. A check stops at its first assertion failure, so this is not a
+  count of all defects or proof that later scenarios passed. The eight buckets
+  retained by this run listed no uploads or objects and were manually removed
+  afterward. Because
   Floci's listing is malformed, this cannot prove that it omitted no uploads;
   the verifier's conservative cleanup should not be weakened based on this run.
 - Reproduced S3 incompatibilities in Floci:
@@ -60,6 +61,12 @@ CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMult
   - When the missing truncation flag was normalized **only for a diagnostic
     run**, completed multipart content lost the initiation's `Cache-Control`.
     This establishes an end-to-end discrepancy, not which operation loses it.
+  - Wildcard `AllowedHeaders` entries are not matched: with `x-custom-*`
+    allowed, a preflight requesting `x-custom-trace` is rejected (or answered
+    by a later rule), and `Access-Control-Allow-Headers` lists the configured
+    patterns rather than the requested headers, which browsers do not treat
+    as allowing them. [CORSRule](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CORSRule.html)
+    permits one `*` wildcard per `AllowedHeader`.
 - Floci returns `NoSuchUpload`/404 for UploadPart, AbortMultipartUpload and
   CompleteMultipartUpload when both the bucket and upload ID are missing. The
   checks previously demanded `NoSuchBucket`/404 and now accept either code. AWS documents `NoSuchUpload` for
@@ -121,10 +128,21 @@ CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMult
 
 ### Coverage gaps
 
-- [ ] Test actual CORS behavior, not just configuration storage: matching and
+- [x] Test actual CORS behavior, not just configuration storage: matching and
       nonmatching origins, methods and headers; first-match rule order and
       wildcards; preflight OPTIONS and actual response headers; and changes
       after replacement/deletion. See [PutBucketCors](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketCors.html).
+      [cors-behavior.js](../verify/checks/cors-behavior.js) adds four checks:
+      preflight matching, first-match rule order, headers on signed actual
+      GET/HEAD/PUT requests (unmatched requests must succeed without CORS
+      headers), and behavior before configuration, after replacement and
+      deletion, and on another bucket. Preflights are raw unauthenticated
+      `OPTIONS` requests bounded by the request and run timeouts
+      (`boundedRequest` in [timeouts.js](../verify/timeouts.js)). Rejected
+      preflights need HTTP 403 without CORS headers; the error code is not
+      assumed. Offline tests use a real-SDK HTTP fixture with injectable
+      defects. Against Floci the actual-request and configuration-change checks
+      pass and both preflight checks fail on wildcard `AllowedHeaders` (see above).
 - [x] Check independently calculated ETags for small single-part SSE-S3/plain
       uploads and copies, and exercise checksum validation including mismatched
       checksums where supported. Current checks mostly compare a service's ETag

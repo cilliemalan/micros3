@@ -64,24 +64,37 @@ export function createRunDeadline({ runTimeout = DEFAULT_RUN_TIMEOUT_MS,
   };
 }
 
+const clientBounds = new WeakMap();
+
+// Combines the per-request timeout, the run or cleanup deadline and a caller's
+// signal. `describe()` explains which of them stopped the request.
+function requestBounds({ requestTimeout, deadline }, operation, callerSignal) {
+  const timer = new AbortController();
+  const timeout = setTimeout(() => timer.abort(), requestTimeout);
+  timeout.unref?.();
+  const cleaning = isCleaningUp();
+  const run = deadline && (cleaning ? deadline.cleanupSignal : deadline.signal);
+  const signal = AbortSignal.any([timer.signal, run, callerSignal].filter(Boolean));
+  return {
+    signal,
+    clear: () => clearTimeout(timeout),
+    stopped: () => timer.signal.aborted || Boolean(run?.aborted),
+    describe: () => timer.signal.aborted
+      ? `${operation} timed out after ${requestTimeout} ms`
+      : `${operation} cancelled: ${cleaning ? 'cleanup grace period expired' : 'run timeout reached'}`,
+  };
+}
+
 // Wraps client.send in place so every request is bounded. Requests outside
 // cleanup also stop at the run deadline; cleanup requests stop at the end of
 // the grace period. Timeout errors carry no HTTP status, so checks never treat
 // them as proof that a resource is missing or that creation was rejected.
 export function applyTimeouts(client, { requestTimeout = DEFAULT_REQUEST_TIMEOUT_MS, deadline } = {}) {
+  clientBounds.set(client, { requestTimeout, deadline });
   const send = client.send.bind(client);
   client.send = async (command, options = {}, ...rest) => {
-    const timer = new AbortController();
-    const timeout = setTimeout(() => timer.abort(), requestTimeout);
-    timeout.unref?.();
-    const cleaning = isCleaningUp();
-    const run = deadline && (cleaning ? deadline.cleanupSignal : deadline.signal);
-    const signals = [timer.signal, run, options.abortSignal].filter(Boolean);
-    const operation = operationName(command);
-    const describe = () => timer.signal.aborted
-      ? `${operation} timed out after ${requestTimeout} ms`
-      : `${operation} cancelled: ${cleaning ? 'cleanup grace period expired' : 'run timeout reached'}`;
-    const abortSignal = AbortSignal.any(signals);
+    const bounds = requestBounds({ requestTimeout, deadline }, operationName(command), options.abortSignal);
+    const { signal: abortSignal, describe } = bounds;
     try {
       const response = await send(command, { ...options, abortSignal }, ...rest);
       // Keep the request bounded while a streamed body is consumed.
@@ -89,7 +102,7 @@ export function applyTimeouts(client, { requestTimeout = DEFAULT_REQUEST_TIMEOUT
       if (body && typeof body.destroy === 'function' && typeof body.once === 'function' && !body.readableEnded) {
         const onAbort = () => body.destroy(new VerifierTimeoutError(`${describe()} while reading the response body`));
         const done = () => {
-          clearTimeout(timeout);
+          bounds.clear();
           abortSignal.removeEventListener('abort', onAbort);
         };
         if (abortSignal.aborted) onAbort();
@@ -98,18 +111,34 @@ export function applyTimeouts(client, { requestTimeout = DEFAULT_REQUEST_TIMEOUT
         body.once('close', done);
         body.once('error', done);
       } else {
-        clearTimeout(timeout);
+        bounds.clear();
       }
       return response;
     } catch (error) {
-      clearTimeout(timeout);
-      if (timer.signal.aborted || run?.aborted) {
-        throw new VerifierTimeoutError(describe(), { cause: error });
-      }
+      bounds.clear();
+      if (bounds.stopped()) throw new VerifierTimeoutError(describe(), { cause: error });
       throw error;
     }
   };
   return client;
+}
+
+// Bounds a request made outside the SDK (such as an unsigned CORS preflight)
+// like one made through a client passed to applyTimeouts. `request(signal)`
+// must finish reading the response before it resolves. Without applied
+// timeouts the request is unbounded and receives no signal.
+export async function boundedRequest(client, operation, request) {
+  const limits = clientBounds.get(client);
+  if (!limits) return request(undefined);
+  const bounds = requestBounds(limits, operation);
+  try {
+    return await request(bounds.signal);
+  } catch (error) {
+    if (bounds.stopped()) throw new VerifierTimeoutError(bounds.describe(), { cause: error });
+    throw error;
+  } finally {
+    bounds.clear();
+  }
 }
 
 // Parses a command-line timeout in seconds into milliseconds.

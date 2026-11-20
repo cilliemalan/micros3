@@ -81,7 +81,20 @@ as `BLOCKED` with the failed prerequisite rather than as a failure of the
 operation under test; blocked checks also fail the run. Incorrect content in a
 successful listing is still attributed to the operation under test. CORS configuration checks cover multiple ordered rules and their
 fields, replacement, bucket isolation, the 100-rule limit, invalid inputs, and
-missing configurations and buckets. Encryption checks verify the SSE-S3 default
+missing configurations and buckets. CORS behavior checks apply a stored
+configuration to requests: unauthenticated preflight `OPTIONS` requests check
+matching and nonmatching origins (including wildcard origins, schemes, ports and
+suffixes), methods and requested headers (including wildcard `AllowedHeaders`),
+that the first matching rule answers (its methods and `Access-Control-Max-Age`),
+and that every requested header is listed literally or as `*` in
+`Access-Control-Allow-Headers`. Signed GET, HEAD and PUT requests with an
+`Origin` header check `Access-Control-Allow-Origin`, `Access-Control-Expose-Headers`
+and `Vary: Origin` on matching responses, and that unmatched requests succeed
+without CORS headers. Preflights are rejected with HTTP 403 before a
+configuration exists, after replacement and deletion, and on another bucket.
+A `*` origin rule may answer with `*` or the request origin. The rejected
+preflight's error code, incomplete preflights, `Access-Control-Allow-Credentials`
+and missing buckets are not checked. Encryption checks verify the SSE-S3 default
 configuration on a newly created bucket and the missing-bucket error. Changing
 encryption configuration is outside the planned scope. A connection error stops the run, and any
 connection or check failure gives a nonzero exit status.

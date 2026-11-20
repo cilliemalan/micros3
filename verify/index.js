@@ -10,6 +10,7 @@ import listingTests from './checks/listing.js';
 import listingEncodingTests from './checks/listing-encoding.js';
 import multipartTests from './checks/multipart.js';
 import corsTests from './checks/cors.js';
+import corsBehaviorTests from './checks/cors-behavior.js';
 import encryptionTests from './checks/encryption.js';
 
 function parseOptions() {
@@ -80,7 +81,7 @@ const suites = [
   { name: 'Object operations', tests: objectTests },
   { name: 'Listing operations', tests: [...listingTests, ...listingEncodingTests] },
   { name: 'Multipart operations', tests: multipartTests },
-  { name: 'CORS operations', tests: corsTests },
+  { name: 'CORS operations', tests: [...corsTests, ...corsBehaviorTests] },
   { name: 'Encryption', tests: encryptionTests },
 ];
 
