@@ -18,8 +18,8 @@ It is meant to implement these operations with basic support:
   - [ ] DeleteObjects
   - [ ] CopyObject
 - Listing:
-  - [ ] ListObjects
-  - [ ] ListObjectsV2
+  - [x] ListObjects
+  - [x] ListObjectsV2
 - Multipart:
   - [ ] CreateMultipartUpload
   - [ ] UploadPart
@@ -32,7 +32,7 @@ It is meant to implement these operations with basic support:
   - [ ] GetBucketCors
   - [ ] DeleteBucketCors
 - Encryption:
-  - [ ] GetBucketEncryption
+  - [x] GetBucketEncryption
 
 ### Supported features
 bucket creation, listing and deletion; object upload, download, copy and deletion; object listing; multipart uploads; bucket CORS; MD5 ETags for single-part objects; `Content-MD5` and CRC32/SHA-256 checksum validation on upload.

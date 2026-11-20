@@ -8,6 +8,8 @@ add_library(libmicros3 STATIC
     digest.cpp
     handlers.cpp
     http.cpp
+    list_handlers.cpp
+    listing.cpp
     object_handlers.cpp
     objects.cpp
     router.cpp

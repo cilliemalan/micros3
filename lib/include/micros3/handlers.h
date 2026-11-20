@@ -22,7 +22,12 @@ http::Response create_bucket(Store &store, const http::Request &request, const r
                              std::string_view body);
 http::Response head_bucket(Store &store, const http::Request &request, const router::Route &route);
 http::Response get_bucket_location(Store &store, const http::Request &request, const router::Route &route);
+http::Response get_bucket_encryption(Store &store, const http::Request &request, const router::Route &route);
 http::Response delete_bucket(Store &store, const http::Request &request, const router::Route &route);
+
+// Object listings (list_handlers.cpp).
+http::Response list_objects(Store &store, const http::Request &request, const router::Route &route);
+http::Response list_objects_v2(Store &store, const http::Request &request, const router::Route &route);
 
 // Object operations (object_handlers.cpp). PutObject streams its body, so it
 // is an exchange rather than a handler.

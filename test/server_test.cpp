@@ -726,3 +726,114 @@ TEST(ObjectApi, LargeObjectStreamsBothWays) {
     EXPECT_TRUE(status_is(response, "206")) << head_of(response);
     EXPECT_TRUE(body_of(response) == body.substr(1000000));
 }
+
+// GetBucketEncryption and object listings.
+
+TEST(BucketApi, GetBucketEncryption) {
+    ObjectServer s;
+    std::string response = s.send("GET", "/objects?encryption");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_TRUE(has(body_of(response), "<ServerSideEncryptionConfiguration xmlns=\"http://s3.amazonaws.com/doc/"
+                                       "2006-03-01/\"><Rule><ApplyServerSideEncryptionByDefault><SSEAlgorithm>"
+                                       "AES256</SSEAlgorithm></ApplyServerSideEncryptionByDefault>"))
+        << response;
+    EXPECT_FALSE(has(body_of(response), "KMSMasterKeyID")) << response;
+
+    response = s.send("GET", "/missing-bucket?encryption");
+    EXPECT_TRUE(status_is(response, "404")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << response;
+
+    response = s.send("PUT", "/objects?encryption", "<ServerSideEncryptionConfiguration/>");
+    EXPECT_TRUE(status_is(response, "501")) << response;
+}
+
+TEST(ListApi, MissingAndEmptyBucket) {
+    ObjectServer s;
+    for (const char *target : {"/missing-bucket", "/missing-bucket?list-type=2"}) {
+        const std::string response = s.send("GET", target);
+        EXPECT_TRUE(status_is(response, "404")) << response;
+        EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << response;
+    }
+    std::string response = s.send("GET", "/objects");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_TRUE(has(body_of(response), "<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">"
+                                       "<Name>objects</Name><Prefix></Prefix><Marker></Marker>"
+                                       "<MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated></ListBucketResult>"))
+        << response;
+    response = s.send("GET", "/objects?list-type=2");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_TRUE(has(body_of(response), "<KeyCount>0</KeyCount><MaxKeys>1000</MaxKeys>")) << response;
+}
+
+TEST(ListApi, V1PagesWithDelimiterAndNextMarker) {
+    ObjectServer s;
+    for (const char *key : {"a/1", "a/b/2", "a/c/3", "z"}) ASSERT_TRUE(status_is(s.send("PUT", std::string("/objects/") + key, "x"), "200"));
+
+    std::string body = body_of(s.send("GET", "/objects?max-keys=2"));
+    EXPECT_TRUE(has(body, "<IsTruncated>true</IsTruncated>")) << body;
+    EXPECT_FALSE(has(body, "<NextMarker>")) << body;
+    EXPECT_TRUE(has(body, "<Contents><Key>a/1</Key><LastModified>")) << body;
+    EXPECT_TRUE(has(body, "<ETag>&quot;9dd4e461268c8034f5c8564e155c67a6&quot;</ETag><Size>1</Size>")) << body;
+    EXPECT_TRUE(has(body, "<Owner><ID>")) << body;
+
+    body = body_of(s.send("GET", "/objects?prefix=a%2F&delimiter=%2F&max-keys=2"));
+    EXPECT_TRUE(has(body, "<Prefix>a/</Prefix>")) << body;
+    EXPECT_TRUE(has(body, "<Delimiter>/</Delimiter>")) << body;
+    EXPECT_TRUE(has(body, "<NextMarker>a/b/</NextMarker>")) << body;
+    EXPECT_TRUE(has(body, "<CommonPrefixes><Prefix>a/b/</Prefix></CommonPrefixes>")) << body;
+
+    body = body_of(s.send("GET", "/objects?prefix=a%2F&delimiter=%2F&max-keys=2&marker=a%2Fb%2F"));
+    EXPECT_TRUE(has(body, "<Marker>a/b/</Marker>")) << body;
+    EXPECT_TRUE(has(body, "<IsTruncated>false</IsTruncated>")) << body;
+    EXPECT_TRUE(has(body, "<CommonPrefixes><Prefix>a/c/</Prefix></CommonPrefixes>")) << body;
+    EXPECT_FALSE(has(body, "<Contents>")) << body;
+}
+
+TEST(ListApi, V2ContinuationToken) {
+    ObjectServer s;
+    for (const char *key : {"a", "b", "c"}) ASSERT_TRUE(status_is(s.send("PUT", std::string("/objects/") + key, "x"), "200"));
+    std::string body = body_of(s.send("GET", "/objects?list-type=2&max-keys=2"));
+    EXPECT_TRUE(has(body, "<KeyCount>2</KeyCount>")) << body;
+    EXPECT_TRUE(has(body, "<IsTruncated>true</IsTruncated>")) << body;
+    const std::string token = micros3::digest::base64_encode("b");
+    EXPECT_TRUE(has(body, "<NextContinuationToken>" + token + "</NextContinuationToken>")) << body;
+    EXPECT_FALSE(has(body, "<Owner>")) << body;
+
+    body = body_of(s.send("GET", "/objects?list-type=2&max-keys=2&continuation-token=" + token));
+    EXPECT_TRUE(has(body, "<ContinuationToken>" + token + "</ContinuationToken>")) << body;
+    EXPECT_TRUE(has(body, "<Key>c</Key>")) << body;
+    EXPECT_FALSE(has(body, "<NextContinuationToken>")) << body;
+
+    body = body_of(s.send("GET", "/objects?list-type=2&start-after=a&fetch-owner=true"));
+    EXPECT_TRUE(has(body, "<StartAfter>a</StartAfter>")) << body;
+    EXPECT_TRUE(has(body, "<KeyCount>2</KeyCount>")) << body;
+    EXPECT_TRUE(has(body, "<Owner>")) << body;
+
+    std::string response = s.send("GET", "/objects?list-type=2&continuation-token=%21%21");
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>InvalidArgument</Code>")) << response;
+    response = s.send("GET", "/objects?max-keys=-1");
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    response = s.send("GET", "/objects?encoding-type=base64");
+    EXPECT_TRUE(status_is(response, "400")) << response;
+}
+
+TEST(ListApi, UrlEncodingAndXmlEscaping) {
+    ObjectServer s;
+    // "ctl/a\x01 b&c" and "x<y>"
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/ctl/a%01%20b%26c", "x"), "200"));
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/x%3Cy%3E%09", "x"), "200"));
+
+    std::string body = body_of(s.send("GET", "/objects?encoding-type=url&prefix=ctl%2Fa%01&delimiter=%20"));
+    EXPECT_TRUE(has(body, "<Prefix>ctl/a%01</Prefix>")) << body;
+    EXPECT_TRUE(has(body, "<Delimiter>+</Delimiter>")) << body;
+    EXPECT_TRUE(has(body, "<EncodingType>url</EncodingType>")) << body;
+    EXPECT_TRUE(has(body, "<CommonPrefixes><Prefix>ctl/a%01+</Prefix></CommonPrefixes>")) << body;
+
+    body = body_of(s.send("GET", "/objects?list-type=2&encoding-type=url"));
+    EXPECT_TRUE(has(body, "<Key>ctl/a%01+b%26c</Key>")) << body;
+    EXPECT_TRUE(has(body, "<Key>x%3Cy%3E%09</Key>")) << body;
+
+    body = body_of(s.send("GET", "/objects?prefix=x"));
+    EXPECT_TRUE(has(body, "<Key>x&lt;y&gt;&#x9;</Key>")) << body;
+}

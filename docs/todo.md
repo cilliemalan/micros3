@@ -78,21 +78,21 @@ All are recorded in design.md. Nothing here is open.
 
 ## Phase 4: Encryption
 
-- [ ] GetBucketEncryption: one rule with `SSEAlgorithm` AES256, no KMS key ID, and no `BucketKeyEnabled: true`. Missing bucket returns `NoSuchBucket`.
-- [ ] `PutBucketEncryption` is out of scope and returns `NotImplemented`, through the router item in Phase 1.
+- [x] GetBucketEncryption: one rule with `SSEAlgorithm` AES256, no KMS key ID, and no `BucketKeyEnabled: true`. Missing bucket returns `NoSuchBucket`. (`get_bucket_encryption` in `lib/bucket_handlers.cpp`, which sends `BucketKeyEnabled` false.)
+- [x] `PutBucketEncryption` is out of scope and returns `NotImplemented`, through the router item in Phase 1.
 
-**Checks:** `encryption.js`.
+**Checks:** `encryption.js`. (On 2026-11-20, both encryption checks passed.)
 
 ## Phase 5: Listing
 
-- [ ] ListObjects (v1): `prefix`, `delimiter`, `marker`, `max-keys`, `IsTruncated`, `NextMarker`, `CommonPrefixes`. Match `listing.js` for when `NextMarker` appears.
-- [ ] ListObjectsV2 (`list-type=2`): `prefix`, `delimiter`, `start-after`, `continuation-token`, `max-keys`, `KeyCount`, `IsTruncated`, `NextContinuationToken`. The token is printable ASCII, the base64 of the last key.
-- [ ] Order by the BLOB key in SQL (memcmp, which gives UTF-8 byte order). Use the primary-key index.
-- [ ] Missing bucket returns `NoSuchBucket`. An empty bucket returns an empty listing.
-- [ ] `EncodingType=url`: encode `Key`, `Prefix`, `Delimiter`, `Marker`, `StartAfter`, `NextMarker`, `NextContinuationToken` (when it is a key) and `CommonPrefixes`, and echo `EncodingType`.
-- [ ] XML escaping. Output must not contain any character XML 1.0 forbids. Match `listing-encoding.js` and `encoding.js` for control characters without `EncodingType=url`.
+- [x] ListObjects (v1): `prefix`, `delimiter`, `marker`, `max-keys`, `IsTruncated`, `NextMarker`, `CommonPrefixes`. Match `listing.js` for when `NextMarker` appears. (`NextMarker` only on a truncated page with a delimiter, as S3 does. `listing::list` in `lib/listing.cpp`, handlers in `lib/list_handlers.cpp`.)
+- [x] ListObjectsV2 (`list-type=2`): `prefix`, `delimiter`, `start-after`, `continuation-token`, `max-keys`, `KeyCount`, `IsTruncated`, `NextContinuationToken`. The token is printable ASCII, the base64 of the last key. (Or of the last common prefix. `fetch-owner=true` adds `Owner`. A marker inside a common prefix resumes after that whole prefix.)
+- [x] Order by the BLOB key in SQL (memcmp, which gives UTF-8 byte order). Use the primary-key index.
+- [x] Missing bucket returns `NoSuchBucket`. An empty bucket returns an empty listing.
+- [x] `EncodingType=url`: encode `Key`, `Prefix`, `Delimiter`, `Marker`, `StartAfter`, `NextMarker`, `NextContinuationToken` (when it is a key) and `CommonPrefixes`, and echo `EncodingType`. (Unreserved characters and `/` stay, a space becomes `+`, every other byte is `%XX`. Continuation tokens are base64 and never encoded. Any other `encoding-type` is `InvalidArgument`.)
+- [x] XML escaping. Output must not contain any character XML 1.0 forbids. Match `listing-encoding.js` and `encoding.js` for control characters without `EncodingType=url`.
 
-**Checks:** `listing.js`, `listing-encoding.js`, `encoding.js`.
+**Checks:** `listing.js`, `listing-encoding.js`, `encoding.js`. (On 2026-11-20, all four listing checks passed.)
 
 ## Phase 6: DeleteObjects and CopyObject
 
@@ -157,7 +157,7 @@ All are recorded in design.md. Nothing here is open.
 
 ## Emulator tests
 
-- [ ] Replace `test/hello_test.cpp` with store tests: UTF-8 byte order for listings, continuation token encoding, single-part and multipart ETags, XML escaping, the BadDigest and InvalidDigest rules, bucket-name validation, and Range parsing and 206/416 results. (`hello_test.cpp` is gone. Single-part ETags, BadDigest and InvalidDigest, Range and 206/416 are in `test/server_test.cpp` and `test/conditions_test.cpp`; XML escaping and bucket names have their own tests. Listing order, continuation tokens and multipart ETags remain.)
+- [ ] Replace `test/hello_test.cpp` with store tests: UTF-8 byte order for listings, continuation token encoding, single-part and multipart ETags, XML escaping, the BadDigest and InvalidDigest rules, bucket-name validation, and Range parsing and 206/416 results. (`hello_test.cpp` is gone. Single-part ETags, BadDigest and InvalidDigest, Range and 206/416 are in `test/server_test.cpp` and `test/conditions_test.cpp`; XML escaping and bucket names have their own tests. Listing order and pagination are in `test/listing_test.cpp`, and continuation tokens and URL encoding in `test/server_test.cpp`. Multipart ETags remain.)
 - [x] SigV4 signing against AWS's published test vectors (Phase 1). (The S3 GET, PUT, lifecycle and list examples, the derived-key example, and `get-vanilla`.)
 - [x] MD5, SHA-256, CRC32 and base64 results checked against known vectors, to confirm the wiring to the libraries. (`test/digest_test.cpp`, which also checks HMAC-SHA256 against RFC 4231.)
 - [x] Persistence script (`test/persistence.sh`): create a bucket and an object, stop, restart on the same data directory, read the object back. (`test/persistence.sh [binary]`, with helpers in `test/lib-server.sh`. Needs curl 7.75+.)

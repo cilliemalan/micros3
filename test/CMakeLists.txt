@@ -3,6 +3,7 @@ add_executable(testmicros3
     conditions_test.cpp
     config_test.cpp
     digest_test.cpp
+    listing_test.cpp
     deps_test.cpp
     objects_test.cpp
     router_test.cpp

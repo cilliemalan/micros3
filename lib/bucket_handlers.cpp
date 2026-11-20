@@ -1,4 +1,5 @@
-// ListBuckets, CreateBucket, HeadBucket, GetBucketLocation and DeleteBucket.
+// ListBuckets, CreateBucket, HeadBucket, GetBucketLocation, GetBucketEncryption
+// and DeleteBucket.
 
 #include "micros3/buckets.h"
 #include "micros3/clock.h"
@@ -156,6 +157,19 @@ http::Response get_bucket_location(Store &store, const http::Request &request, c
     xml::Writer writer;
     writer.open("LocationConstraint", xml::kS3Namespace);
     if (bucket->region != buckets::kDefaultRegion) writer.text(bucket->region);
+    return xml_response(writer.finish());
+}
+
+http::Response get_bucket_encryption(Store &store, const http::Request &request, const router::Route &route) {
+    if (!buckets::find(store, route.bucket)) return error(no_such_bucket(), request);
+    // Every bucket has the SSE-S3 default, which cannot be changed.
+    xml::Writer writer;
+    writer.open("ServerSideEncryptionConfiguration", xml::kS3Namespace)
+        .open("Rule")
+        .open("ApplyServerSideEncryptionByDefault")
+        .element("SSEAlgorithm", "AES256")
+        .close()
+        .element("BucketKeyEnabled", "false");
     return xml_response(writer.finish());
 }
 
