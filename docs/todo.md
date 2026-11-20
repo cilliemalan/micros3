@@ -39,9 +39,9 @@ All are recorded in design.md. Nothing here is open.
 - [x] XML writer for success bodies and for errors (`Code`, `Message`, `Resource`, `RequestId`). Set the `x-amz-request-id` header to the same value.
 - [x] SQLite in WAL mode, with `synchronous=FULL` for commits and `PRAGMA foreign_keys=ON` on every connection. Create the four tables in the design (`buckets`, `objects`, `uploads`, `parts`) if missing. `uploads.bucket` is `ON DELETE CASCADE` (D1). (`lib/db.cpp` wraps the C API; `lib/store.cpp` configures the connection and creates the schema, plus an `uploads(bucket, key)` index for ListMultipartUploads. Tests in `test/store_test.cpp`.)
 - [x] Startup: create `blobs/` and `staging/`. Delete every file in `staging/`, and every file in `blobs/` that no row refers to. (`Store`'s constructor, called from `main` before the server starts. It logs what it removed.)
-- [ ] SigV4 header authentication, as design.md's "Authentication" section describes: canonical request, string to sign, derived signing key, constant-time comparison, and the access key ID check. Use AWS's published test vectors.
-- [ ] Payload hash check: `x-amz-content-sha256` against the SHA-256 of the streamed body. A mismatch returns `XAmzContentSHA256Mismatch` (400) and deletes the staging file.
-- [ ] Preflight OPTIONS is accepted without a signature. Its full handling is in Phase 10.
+- [x] SigV4 header authentication, as design.md's "Authentication" section describes: canonical request, string to sign, derived signing key, constant-time comparison, and the access key ID check. Use AWS's published test vectors. (`lib/sigv4.cpp`, called from `S3Service::begin` after routing. The canonical URI and query are rebuilt from the decoded target. Any region in the credential scope is accepted, and clock skew is not checked. `STREAMING-*` payloads answer 501. Tests in `test/sigv4_test.cpp` and `test/server_test.cpp`.)
+- [x] Payload hash check: `x-amz-content-sha256` against the SHA-256 of the streamed body. A mismatch returns `XAmzContentSHA256Mismatch` (400) and deletes the staging file. (`PayloadHashExchange` wraps the handler's exchange and calls its `on_abort` on a mismatch, so each handler must discard its staging file in `on_abort`.)
+- [x] Preflight OPTIONS is accepted without a signature. Its full handling is in Phase 10.
 - [ ] Dockerfile (D4, D8): an Alpine builder stage, then `FROM scratch` with the binary, `ENV MICROS3_DATA_DIR=/data MICROS3_PORT=3923`, `VOLUME /data`, `EXPOSE 3923`, `USER 65532:65532`, and an entrypoint of the binary. The builder creates `/data` owned by `65532:65532`. Add `.dockerignore` for `ooo/`, `verify/node_modules` and `.git`.
 - [ ] Static link under CMake (`-static`, musl on the builder), excluded on Windows.
 
@@ -158,7 +158,7 @@ All are recorded in design.md. Nothing here is open.
 ## Emulator tests
 
 - [ ] Replace `test/hello_test.cpp` with store tests: UTF-8 byte order for listings, continuation token encoding, single-part and multipart ETags, XML escaping, the BadDigest and InvalidDigest rules, bucket-name validation, and Range parsing and 206/416 results.
-- [ ] SigV4 signing against AWS's published test vectors (Phase 1).
+- [x] SigV4 signing against AWS's published test vectors (Phase 1). (The S3 GET, PUT, lifecycle and list examples, the derived-key example, and `get-vanilla`.)
 - [x] MD5, SHA-256, CRC32 and base64 results checked against known vectors, to confirm the wiring to the libraries. (`test/digest_test.cpp`, which also checks HMAC-SHA256 against RFC 4231.)
 - [ ] Persistence script (`test/persistence.sh`): create a bucket and an object, stop, restart on the same data directory, read the object back.
 - [ ] Crash-safety script (`test/crash.sh`): start a large PutObject with `curl --limit-rate` so it runs for a while, send SIGKILL mid-upload, restart. The object must be absent or complete, and `staging/` must be empty.

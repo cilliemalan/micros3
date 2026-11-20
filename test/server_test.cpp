@@ -1,5 +1,6 @@
 #include "micros3/server.h"
 #include "micros3/service.h"
+#include "micros3/sigv4.h"
 
 #include <gtest/gtest.h>
 
@@ -11,6 +12,7 @@
 #include <atomic>
 #include <future>
 #include <memory>
+#include <optional>
 #include <regex>
 #include <string>
 #include <thread>
@@ -197,11 +199,39 @@ TEST(Server, KeepAliveServesSeveralRequests) {
     EXPECT_NE(response.find("bytes=2"), std::string::npos) << response;
 }
 
+const micros3::sigv4::Credentials kCredentials{"test", "test"};
+
+// A raw HTTP/1.1 request, signed with `credentials` when they are given.
+std::string s3_request(const std::string &method, const std::string &target, const std::string &body = "",
+                       const std::optional<micros3::sigv4::Credentials> &credentials = kCredentials,
+                       std::optional<std::string> payload_hash = std::nullopt) {
+    micros3::http::Request request;
+    request.method = method;
+    const std::size_t question = target.find('?');
+    request.path = target.substr(0, question);
+    request.query = question == std::string::npos ? "" : target.substr(question + 1);
+    request.headers = {{"host", "localhost"},
+                       {"x-amz-date", "20261120T101500Z"},
+                       {"x-amz-content-sha256",
+                        payload_hash.value_or(micros3::digest::hex(micros3::digest::sha256(body)))}};
+    if (credentials) {
+        request.headers.emplace_back(
+            "authorization", micros3::sigv4::authorization_header(request, *credentials, "us-east-1",
+                                                                  {"host", "x-amz-content-sha256", "x-amz-date"}));
+    }
+    std::string text = method + " " + target + " HTTP/1.1\r\n";
+    for (const auto &[name, value] : request.headers) text += name + ": " + value + "\r\n";
+    text += "Connection: close\r\n";
+    if (!body.empty() || method == "PUT" || method == "POST") {
+        text += "Content-Length: " + std::to_string(body.size()) + "\r\n";
+    }
+    return text + "\r\n" + body;
+}
+
 TEST(S3Service, UnsupportedSubresourceIsNotImplementedXml) {
-    micros3::S3Service service;
+    micros3::S3Service service(kCredentials);
     RunningServer server(service);
-    const std::string response = exchange(server.port(), "PUT /bucket/key?tagging HTTP/1.1\r\nHost: localhost\r\n"
-                                                         "Connection: close\r\nContent-Length: 5\r\n\r\nhello");
+    const std::string response = exchange(server.port(), s3_request("PUT", "/bucket/key?tagging", "hello"));
     EXPECT_EQ(response.rfind("HTTP/1.1 501 Not Implemented\r\n", 0), 0u) << response;
     EXPECT_EQ(header_value(response, "Content-Type"), "application/xml");
     const std::string id = header_value(response, "x-amz-request-id");
@@ -212,19 +242,66 @@ TEST(S3Service, UnsupportedSubresourceIsNotImplementedXml) {
 }
 
 TEST(S3Service, HeadErrorHasNoBody) {
-    micros3::S3Service service;
+    micros3::S3Service service(kCredentials);
     RunningServer server(service);
-    const std::string response =
-        exchange(server.port(), "HEAD /bucket/key?acl HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    const std::string response = exchange(server.port(), s3_request("HEAD", "/bucket/key?acl"));
     EXPECT_EQ(response.rfind("HTTP/1.1 501 Not Implemented\r\n", 0), 0u) << response;
     EXPECT_EQ(body_of(response), "");
 }
 
 TEST(S3Service, InvalidUriIsBadRequest) {
-    micros3::S3Service service;
+    micros3::S3Service service(kCredentials);
     RunningServer server(service);
     const std::string response =
         exchange(server.port(), "GET /bucket/%zz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
     EXPECT_EQ(response.rfind("HTTP/1.1 400 Bad Request\r\n", 0), 0u) << response;
     EXPECT_NE(body_of(response).find("<Code>InvalidURI</Code>"), std::string::npos);
+}
+
+TEST(S3Service, UnsignedRequestIsAccessDenied) {
+    micros3::S3Service service(kCredentials);
+    RunningServer server(service);
+    for (const char *target : {"/", "/bucket", "/bucket/key?tagging"}) {
+        const std::string response = exchange(server.port(), s3_request("GET", target, "", std::nullopt));
+        EXPECT_EQ(response.rfind("HTTP/1.1 403 Forbidden\r\n", 0), 0u) << response;
+        EXPECT_NE(body_of(response).find("<Code>AccessDenied</Code>"), std::string::npos) << response;
+    }
+}
+
+TEST(S3Service, WrongSecretIsSignatureDoesNotMatch) {
+    micros3::S3Service service(kCredentials);
+    RunningServer server(service);
+    const std::string response =
+        exchange(server.port(), s3_request("GET", "/", "", micros3::sigv4::Credentials{"test", "wrong"}));
+    EXPECT_EQ(response.rfind("HTTP/1.1 403 Forbidden\r\n", 0), 0u) << response;
+    EXPECT_NE(body_of(response).find("<Code>SignatureDoesNotMatch</Code>"), std::string::npos) << response;
+}
+
+TEST(S3Service, SignedRequestPassesAuthentication) {
+    micros3::S3Service service(kCredentials);
+    RunningServer server(service);
+    // ListBuckets is not implemented yet, so a signed request reaches the 501.
+    const std::string response = exchange(server.port(), s3_request("GET", "/"));
+    EXPECT_EQ(response.rfind("HTTP/1.1 501 Not Implemented\r\n", 0), 0u) << response;
+}
+
+TEST(S3Service, PreflightNeedsNoSignature) {
+    micros3::S3Service service(kCredentials);
+    RunningServer server(service);
+    const std::string response = exchange(server.port(), "OPTIONS /bucket/key HTTP/1.1\r\nHost: localhost\r\n"
+                                                         "Origin: https://example.com\r\n"
+                                                         "Access-Control-Request-Method: GET\r\n"
+                                                         "Connection: close\r\n\r\n");
+    EXPECT_EQ(response.find("AccessDenied"), std::string::npos) << response;
+    EXPECT_EQ(response.rfind("HTTP/1.1 403", 0), std::string::npos) << response;
+}
+
+TEST(S3Service, BodyNotMatchingPayloadHashIsRejected) {
+    micros3::S3Service service(kCredentials);
+    RunningServer server(service);
+    const std::string hash = micros3::digest::hex(micros3::digest::sha256("original body"));
+    const std::string response =
+        exchange(server.port(), s3_request("PUT", "/bucket/key", "altered body!", kCredentials, hash));
+    EXPECT_EQ(response.rfind("HTTP/1.1 400 Bad Request\r\n", 0), 0u) << response;
+    EXPECT_NE(body_of(response).find("<Code>XAmzContentSHA256Mismatch</Code>"), std::string::npos) << response;
 }

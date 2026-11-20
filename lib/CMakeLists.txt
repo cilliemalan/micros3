@@ -6,6 +6,7 @@ add_library(libmicros3 STATIC
     router.cpp
     server.cpp
     service.cpp
+    sigv4.cpp
     store.cpp
     url.cpp
     xml.cpp
