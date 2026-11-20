@@ -138,18 +138,18 @@ int run(int argc, char *argv[], std::ostream &out, std::ostream &err) {
         if (arg == "-e" || arg == "--env") {
             if (!env_file.empty() || i + 1 >= argc || argv[i + 1][0] == '\0' ||
                 argv[i + 1][0] == '-') {
-                err << "Usage: verify [-e|--env <file>]\n";
+                err << "Usage: verifys3 [-e|--env <file>]\n";
                 return 1;
             }
             env_file = argv[++i];
         } else if (arg.compare(0, 6, "--env=") == 0 && env_file.empty()) {
             env_file = arg.substr(6);
             if (env_file.empty()) {
-                err << "Usage: verify [-e|--env <file>]\n";
+                err << "Usage: verifys3 [-e|--env <file>]\n";
                 return 1;
             }
         } else {
-            err << "Usage: verify [-e|--env <file>]\n";
+            err << "Usage: verifys3 [-e|--env <file>]\n";
             return 1;
         }
     }

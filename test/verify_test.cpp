@@ -118,7 +118,7 @@ private:
 };
 
 TEST_F(VerifyTest, NoArgumentsKeepsGreeting) {
-    const auto result = run({"verify"});
+    const auto result = run({"verifys3"});
     EXPECT_EQ(result.status, 0);
     EXPECT_EQ(result.out, "Hello, world!\n");
     EXPECT_TRUE(result.err.empty());
@@ -145,7 +145,7 @@ TEST_F(VerifyTest, ShortOptionLoadsValuesAndOverridesEnvironment) {
                "MICROS3_VERIFY_EXISTING_EMPTY=from-file\r\n"
                "MICROS3_VERIFY_OVERRIDDEN_WITH_EMPTY=\r\n");
 
-    const auto result = run({"verify", "-e", file_name()});
+    const auto result = run({"verifys3", "-e", file_name()});
     EXPECT_EQ(result.status, 0);
     EXPECT_EQ(result.out, "Hello, world!\n");
     EXPECT_TRUE(result.err.empty());
@@ -162,23 +162,26 @@ TEST_F(VerifyTest, LongOptionsLoadFile) {
     ScopedEnv value("MICROS3_VERIFY_LONG");
     write_file("MICROS3_VERIFY_LONG='literal # value'\n");
 
-    EXPECT_EQ(run({"verify", "--env", file_name()}).status, 0);
+    EXPECT_EQ(run({"verifys3", "--env", file_name()}).status, 0);
     EXPECT_EQ(get_env("MICROS3_VERIFY_LONG"), "literal # value");
     set_env("MICROS3_VERIFY_LONG", std::nullopt);
-    EXPECT_EQ(run({"verify", "--env=" + file_name()}).status, 0);
+    EXPECT_EQ(run({"verifys3", "--env=" + file_name()}).status, 0);
     EXPECT_EQ(get_env("MICROS3_VERIFY_LONG"), "literal # value");
 }
 
 TEST_F(VerifyTest, ReportsInvalidArgumentsAndMissingFiles) {
     for (const auto &args : std::vector<std::vector<std::string>>{
-             {"verify", "-e"}, {"verify", "--env", ""}, {"verify", "--env="},
-             {"verify", "--unknown"}, {"verify", "-e", file_name(), "--env", file_name()},
-             {"verify", "-e", file_name()}}) {
+             {"verifys3", "-e"}, {"verifys3", "--env", ""}, {"verifys3", "--env="},
+             {"verifys3", "--unknown"}, {"verifys3", "-e", file_name(), "--env", file_name()}}) {
         const auto result = run(args);
         EXPECT_NE(result.status, 0);
         EXPECT_TRUE(result.out.empty());
-        EXPECT_FALSE(result.err.empty());
+        EXPECT_EQ(result.err, "Usage: verifys3 [-e|--env <file>]\n");
     }
+    const auto missing_file = run({"verifys3", "-e", file_name()});
+    EXPECT_NE(missing_file.status, 0);
+    EXPECT_TRUE(missing_file.out.empty());
+    EXPECT_FALSE(missing_file.err.empty());
 }
 
 TEST_F(VerifyTest, RejectsInvalidEntriesWithoutApplyingEarlierLines) {
@@ -186,7 +189,7 @@ TEST_F(VerifyTest, RejectsInvalidEntriesWithoutApplyingEarlierLines) {
     for (const std::string &invalid : {"INVALID", "1INVALID=value", "NAME='unterminated",
                                        "NAME=\"value\" trailing"}) {
         write_file("MICROS3_VERIFY_ATOMIC=should-not-be-set\n" + invalid + "\n");
-        const auto result = run({"verify", "--env", file_name()});
+        const auto result = run({"verifys3", "--env", file_name()});
         EXPECT_NE(result.status, 0);
         EXPECT_TRUE(result.out.empty());
         EXPECT_NE(result.err.find(":2"), std::string::npos);
