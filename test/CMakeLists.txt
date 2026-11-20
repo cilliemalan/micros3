@@ -1,5 +1,5 @@
 add_executable(testmicros3
-    hello_test.cpp
+    config_test.cpp
     digest_test.cpp
     deps_test.cpp
 )

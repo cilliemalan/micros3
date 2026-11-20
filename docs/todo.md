@@ -30,9 +30,9 @@ All are recorded in design.md. Nothing here is open.
   - [x] nlohmann/json v3.12.0, pugixml v1.16, zlib v1.3.1, and Mbed TLS mbedtls-3.6.8 (its tests and programs off).
   - [x] Each non-uWebSockets library built static, with its tests and programs turned off.
   - [x] Check that Mbed TLS builds without extra tools on the Alpine builder. (Checked on `alpine:3.22` with only `build-base cmake git linux-headers`: no Python or Perl needed, since `GEN_FILES` is off.)
-- [ ] Keep `libmicros3` for the server code, and drop `lib/hello.*` once the server stops using it.
-- [ ] Credentials from `MICROS3_ACCESS_KEY_ID` and `MICROS3_SECRET_ACCESS_KEY` only (defaults `test`/`test`), with no flags.
-- [ ] Options: `--data-dir` and `--port`, with environment variables `MICROS3_DATA_DIR` (default `./data`) and `MICROS3_PORT` (default 3923). Flags beat environment variables, which beat defaults. Reject an invalid port with a usage error and a non-zero exit.
+- [x] Keep `libmicros3` for the server code, and drop `lib/hello.*` once the server stops using it.
+- [x] Credentials from `MICROS3_ACCESS_KEY_ID` and `MICROS3_SECRET_ACCESS_KEY` only (defaults `test`/`test`), with no flags.
+- [x] Options: `--data-dir` and `--port`, with environment variables `MICROS3_DATA_DIR` (default `./data`) and `MICROS3_PORT` (default 3923). Flags beat environment variables, which beat defaults. Reject an invalid port with a usage error and a non-zero exit.
 - [ ] HTTP server on the configured port, streaming request bodies.
 - [ ] Path-style router. It splits the path into bucket, key and query. It selects the operation from method and subresource (`?uploads`, `?uploadId=`, `?cors`, `?encryption`, `?location`, `?list-type=2`).
 - [ ] Unsupported subresources and out-of-scope operations (`?tagging`, `?acl`, `?policy`, `?versioning`, and so on) return `NotImplemented` (501). They never fall through to an object operation.

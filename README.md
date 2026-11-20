@@ -15,7 +15,10 @@ cmake --build ooo
 
 Executables are placed directly in `ooo`, including with multi-configuration
 generators. Run `ooo/testmicros3` for the GoogleTest suite, or `ooo/micros3`
-to serve `Hello, world!` at
-`http://localhost:3923/`. On Windows, append `.exe` to the executable names.
+to start the server at
+`http://localhost:3923/` (options: `--data-dir <path>` or `MICROS3_DATA_DIR`,
+default `./data`; `--port <n>` or `MICROS3_PORT`, default 3923; credentials
+from `MICROS3_ACCESS_KEY_ID` and `MICROS3_SECRET_ACCESS_KEY`, default
+`test`/`test`). S3 operations are not implemented yet. On Windows, append `.exe` to the executable names.
 The initial server uses plain HTTP, without TLS or WebSocket compression.
 

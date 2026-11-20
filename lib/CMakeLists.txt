@@ -1,5 +1,5 @@
 add_library(libmicros3 STATIC
-    hello.cpp
+    config.cpp
     digest.cpp
 )
 set_target_properties(libmicros3 PROPERTIES OUTPUT_NAME micros3)
