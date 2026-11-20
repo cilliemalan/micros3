@@ -13,16 +13,16 @@ region supplied by `floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket,
 object listing, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
-CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMultipartUpload, AbortMultipartUpload, CORS configuration and behavior, encryption, and ETag/checksum integrity checks and URL-encoded listings of special keys are implemented. The checked boxes below mean a check exists, not that every S3 behavior has been covered or that the check passes against Floci or AWS. See the follow-up work below.
+CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMultipartUpload, AbortMultipartUpload, CORS configuration and behavior, encryption, and ETag/checksum integrity checks, URL-encoded listings of special keys, and date-based conditional requests with raw HEAD/304 wire checks are implemented. The checked boxes below mean a check exists, not that every S3 behavior has been covered or that the check passes against Floci or AWS. See the follow-up work below.
 
 ## Verification review and follow-up
 
 ### Results and limitations
 
-- The offline suite passed all 222 tests (`npm run test:unit`). The configured
-  Floci run (`npm test -- -e floci.env`) on 2026-11-20 reported 25 passes and
+- The offline suite passed all 229 tests (`npm run test:unit`). The configured
+  Floci run (`npm test -- -e floci.env`) on 2026-11-20 reported 28 passes and
   18 failures. A check stops at its first assertion failure, so this is not a
-  count of all defects or proof that later scenarios passed. The eight buckets
+  count of all defects or proof that later scenarios passed. The buckets
   retained by this run listed no uploads or objects and were manually removed
   afterward. Because
   Floci's listing is malformed, this cannot prove that it omitted no uploads;
@@ -174,10 +174,22 @@ CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMult
       captured ([encoding.js](../verify/checks/encoding.js)) and rejected if it
       contains characters XML 1.0 forbids. Offline tests use a real-SDK HTTP
       fixture. Against Floci both checks fail on key order (see above).
-- [ ] Cover date-based conditional GET/HEAD/copy requests and their interaction
+- [x] Cover date-based conditional GET/HEAD/copy requests and their interaction
       with ETag conditions, and test the actual HEAD response on the wire;
       the SDK does not expose an improperly sent HEAD body. Define which
       optional headers and behaviors MicroS3 intends to support first.
+      The supported conditions are now defined under
+      [Conditional requests](../lib/README.md). [conditional.js](../verify/checks/conditional.js)
+      adds three object checks: GetObject/HeadObject date conditions at and a
+      day before `Last-Modified` (second precision) and their documented
+      combinations with ETag conditions; the same for CopyObject source
+      conditions (412 `PreconditionFailed`, destination unchanged); and signed
+      requests captured from the SDK and sent over a raw connection, requiring
+      no body after HEAD (200/206/304/404/412) or GET 304 responses and HEAD's
+      `Content-Length` to be the object size. Future and unparseable dates are
+      not exercised because S3 does not document them. Offline tests use a
+      real-SDK HTTP fixture with injectable defects. All three pass against
+      Floci; this is not an AWS reference run.
 - [ ] Add SDK-to-HTTP integration fixtures for signed requests, XML errors and
       serialization, including the 200-with-error response. Clarify separately
       whether authentication, permissions and other optional S3 features are in

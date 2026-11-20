@@ -28,9 +28,17 @@ otherwise tolerate. PutObject checks binary and empty uploads, metadata and head
 overwrites, key isolation, and missing buckets. GetObject checks binary and empty
 content, metadata and headers, overwrites, ranges, ETag conditions, and missing
 keys and buckets. HeadObject checks binary and empty objects, metadata and headers,
-overwrites, ranges, ETag conditions, and missing keys and buckets. The SDK
-exposes no response body for HEAD; the check does not inspect the wire for an
-improperly sent body. CopyObject checks cross-bucket and self-copies, binary and
+overwrites, ranges, ETag conditions, and missing keys and buckets. Conditional request checks
+send `If-Modified-Since` and `If-Unmodified-Since` dates equal to and a day
+before the object's `Last-Modified` with GetObject and HeadObject, and the
+`x-amz-copy-source-if-*` equivalents with CopyObject, including the documented
+combinations with ETag conditions (for example, a matching `If-Match` overrides
+a failing `If-Unmodified-Since`) and that a rejected copy leaves the destination
+unchanged. Future and unparseable dates are not exercised. Because the SDK
+exposes no response body for HEAD, a further check captures signed HEAD and
+conditional GET requests and sends them over a raw connection, requiring that
+HEAD (200, 206, 304, 404 and 412) and 304 responses send no body and that HEAD
+reports the object's `Content-Length`. CopyObject checks cross-bucket and self-copies, binary and
 empty objects, URL-encoded keys, metadata and headers, metadata replacement,
 overwrites, conditional copies, isolation, and missing keys and buckets.
 Integrity checks compare ETags with independently calculated MD5 digests for

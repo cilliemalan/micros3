@@ -6,6 +6,7 @@ import { verifyDeleteObject } from './delete-object.js';
 import { verifyDeleteObjects } from './delete-objects.js';
 import { verifyGetObject, verifyPutObject } from './put-get-object.js';
 import integrityTests from './integrity.js';
+import conditionalTests from './conditional.js';
 
 async function verifyHeadObject(client) {
   await withBucket(client, async ({ Bucket }) => {
@@ -115,4 +116,5 @@ export default [
   { name: 'DeleteObject', run: ({ client }) => verifyDeleteObject(client) },
   { name: 'DeleteObjects', run: ({ client }) => verifyDeleteObjects(client) },
   ...integrityTests,
+  ...conditionalTests,
 ];
