@@ -5,8 +5,8 @@ The verifier will check the basic S3 operations listed in
 Floci instance to validate the verifier, using the endpoint, credentials, and
 region supplied by `../floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
-currently lists buckets on startup to check the connection; the operation checks
-below are still planned.
+checks the connection on startup, then runs failing stubs for the operation checks
+below. The actual operation checks are still to be implemented.
 
 ## Setup and cleanup
 

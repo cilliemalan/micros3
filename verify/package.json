@@ -7,7 +7,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node index.js",
+    "test:unit": "node --test test/infrastructure.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1172.0",
