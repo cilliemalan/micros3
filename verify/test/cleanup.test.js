@@ -58,7 +58,7 @@ test('object checks report failed cleanup independently and leave unrelated reso
   ];
   const lines = [];
   const result = await runTests([{ name: 'cleanup', tests: checks }], { client }, { log: line => lines.push(line) });
-  assert.deepEqual(result, { passed: 0, failed: 6, notRun: 0 });
+  assert.deepEqual(result, { passed: 0, failed: 6, blocked: 0, notRun: 0 });
   for (const { name } of checks) {
     const line = lines.find(text => text.startsWith(`  FAIL ${name}:`));
     assert.match(line, /upload response lost/, name);

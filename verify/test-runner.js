@@ -5,10 +5,28 @@
 // has its requests cancelled while its cleanup continues; if it has still not
 // settled when the cleanup grace period ends, it is abandoned and reported as
 // a failure whose resources may remain.
+// A check that cannot exercise its operation because another operation it
+// depends on failed is reported as blocked rather than as the operation failing.
+export class PrerequisiteError extends Error {
+  constructor(operation, cause) {
+    super(`prerequisite ${operation} failed: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.name = 'PrerequisiteError';
+    this.operation = operation;
+  }
+}
+
+// Cleanup failures are aggregated after the original failure (see withCleanup).
+function blockedBy(error) {
+  if (error instanceof PrerequisiteError) return error;
+  if (error instanceof AggregateError && error.errors?.[0] instanceof PrerequisiteError) return error.errors[0];
+  return undefined;
+}
+
 export async function runTests(suites, context, output = console, { deadline } = {}) {
   let passed = 0;
   let failed = 0;
   let notRun = 0;
+  let blocked = 0;
 
   for (const suite of suites) {
     output.log(`\n${suite.name}:`);
@@ -24,14 +42,19 @@ export async function runTests(suites, context, output = console, { deadline } =
         passed++;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        output.log(`  FAIL ${test.name}: ${message}`);
-        failed++;
+        if (blockedBy(error)) {
+          output.log(`  BLOCKED ${test.name}: ${message}`);
+          blocked++;
+        } else {
+          output.log(`  FAIL ${test.name}: ${message}`);
+          failed++;
+        }
       }
     }
   }
 
-  output.log(`\nResults: ${passed} passed, ${failed} failed${notRun ? `, ${notRun} not run` : ''}`);
-  return { passed, failed, notRun };
+  output.log(`\nResults: ${passed} passed, ${failed} failed${blocked ? `, ${blocked} blocked` : ''}${notRun ? `, ${notRun} not run` : ''}`);
+  return { passed, failed, blocked, notRun };
 }
 
 // Cancelled cleanup requests settle promptly; allow them to report first.

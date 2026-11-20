@@ -31,6 +31,11 @@ and neighboring keys, non-destructive initiation, independent completion and
 metadata, and a missing bucket. UploadPart checks binary and empty parts,
 out-of-order uploads, replacement, part number bounds, ETags, isolation,
 assembled content, and missing, completed or aborted uploads and buckets.
+ListParts checks an upload without parts, part numbers, ETags, sizes and
+modification times in part-number order after out-of-order uploads and
+replacement, `MaxParts` and `PartNumberMarker` pagination (including markers
+that name no part and an exact fit), isolation across uploads, keys and
+buckets, and missing, aborted or completed uploads and buckets.
 ListMultipartUploads checks empty and missing buckets, upload identities, initiation
 timestamps and storage class, key ordering, prefix and delimiter filtering, URL
 encoding, marker pagination across same-key uploads and common prefixes, bucket
@@ -47,7 +52,13 @@ and parts, repeat and invalid aborts, preservation of existing objects and other
 uploads across keys and buckets, completion of a surviving upload, empty uploads,
 and a missing bucket.
 These checks require ListMultipartUploads, ListParts, UploadPart,
-CompleteMultipartUpload and AbortMultipartUpload support. CORS configuration checks cover multiple ordered rules and their
+CompleteMultipartUpload and AbortMultipartUpload support. UploadPart,
+CompleteMultipartUpload and AbortMultipartUpload use ListParts to observe part
+state. When such a ListParts request fails or is unsupported (or returns an
+error other than `NoSuchUpload` for a finished upload), the check is reported
+as `BLOCKED` with the failed prerequisite rather than as a failure of the
+operation under test; blocked checks also fail the run. Incorrect content in a
+successful listing is still attributed to the operation under test. CORS configuration checks cover multiple ordered rules and their
 fields, replacement, bucket isolation, the 100-rule limit, invalid inputs, and
 missing configurations and buckets. Encryption checks verify the SSE-S3 default
 configuration on a newly created bucket and the missing-bucket error. Changing

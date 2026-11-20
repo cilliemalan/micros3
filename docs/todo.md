@@ -13,7 +13,7 @@ region supplied by `floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
 checks the connection on startup, then runs the operation checks below. Bucket,
 object listing, PutObject, GetObject, HeadObject, CopyObject, DeleteObject, DeleteObjects,
-CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload, AbortMultipartUpload, CORS configuration, and encryption checks are implemented. The checked boxes below mean a check exists, not that every S3 behavior has been covered or that the check passes against Floci or AWS. See the follow-up work below.
+CreateMultipartUpload, UploadPart, ListParts, ListMultipartUploads, CompleteMultipartUpload, AbortMultipartUpload, CORS configuration, and encryption checks are implemented. The checked boxes below mean a check exists, not that every S3 behavior has been covered or that the check passes against Floci or AWS. See the follow-up work below.
 
 ## Verification review and follow-up
 
@@ -97,12 +97,20 @@ CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload
       same assumptions as the checks and bypass SDK serialization; passing them
       does not establish S3 compatibility. Record the endpoint/version and
       distinguish reference-service limitations from verifier defects.
-- [ ] Resolve the undocumented `ListParts` dependency: it is required by the
+- [x] Resolve the undocumented `ListParts` dependency: it is required by the
       UploadPart, CompleteMultipartUpload and AbortMultipartUpload checks but
       is not in [MicroS3's planned operations](lib/README.md). Either add it
       to the supported contract and verify it, including pagination, or design
       equivalent checks without requiring it. Report missing prerequisites
       separately from the operation being tested.
+      ListParts is now in the [planned operations](../lib/README.md) and has
+      its own check ([list-parts.js](../verify/checks/list-parts.js)). The
+      other multipart checks call it through `listParts`/`assertPartsMissing`,
+      which raise a `PrerequisiteError` when the request itself fails; the
+      runner reports those checks as `BLOCKED` and they still fail the run.
+      Against Floci the ListParts scenarios passed; the check failed only in
+      cleanup because of the known `ListMultipartUploads` defect, and the
+      retained buckets were removed manually.
 
 ### Coverage gaps
 
@@ -199,6 +207,9 @@ CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload
 - [x] **UploadPart**: verify binary and empty parts, out-of-order uploads,
       replacement, part number bounds, ETags, isolation, assembled content,
       and missing, completed, or aborted uploads and buckets.
+- [x] **ListParts**: verify empty uploads, part order, ETags and sizes after
+      replacement, `MaxParts`/`PartNumberMarker` pagination, isolation, and
+      missing, aborted or completed uploads and buckets.
 - [x] **ListMultipartUploads**: verify empty and missing buckets, upload identities and metadata,
       key order, prefixes, delimiters, URL encoding, marker pagination including same-key
       uploads and rolled-up prefixes, bucket isolation, and completed and aborted uploads.

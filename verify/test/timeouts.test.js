@@ -195,7 +195,7 @@ test('a check that never settles is abandoned after the cleanup grace period', a
   ] }];
   try {
     const result = await runTests(suites, {}, { log: line => lines.push(line) }, { deadline });
-    assert.deepEqual(result, { passed: 0, failed: 1, notRun: 1 });
+    assert.deepEqual(result, { passed: 0, failed: 1, blocked: 0, notRun: 1 });
     assert.match(lines[1], /^ {2}FAIL stuck: abandoned after the run timeout and cleanup grace period; its resources may remain/);
     assert.equal(lines[2], '  NOT RUN after: run timeout reached');
   } finally {

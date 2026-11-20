@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import {
   AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand,
-  DeleteBucketCommand, GetObjectCommand, ListPartsCommand, PutObjectCommand, UploadPartCommand,
+  DeleteBucketCommand, GetObjectCommand, PutObjectCommand, UploadPartCommand,
 } from '@aws-sdk/client-s3';
+import { assertPartsMissing, listParts } from './list-parts.js';
 import { withUploadCleanup } from './multipart-cleanup.js';
 import { MISSING_BUCKET_UPLOAD_CODES, assertMissing, assertS3Error, assertStatus, withBucket } from './resources.js';
 
@@ -58,8 +59,7 @@ export async function verifyCompleteMultipartUpload(client) {
       assertStatus(before, 200, 'GetObject after failed completions');
       assert.deepEqual(Buffer.from(await before.Body.transformToByteArray()), original, 'failed completions preserve existing object');
       await assertMissing(() => client.send(new GetObjectCommand({ Bucket, Key: neighbor })), 'failed completion object', 'NoSuchKey');
-      const parts = await client.send(new ListPartsCommand({ Bucket, Key, UploadId: id }));
-      assertStatus(parts, 200, 'ListParts after failed completions');
+      const parts = await listParts(client, { Bucket, Key, UploadId: id });
       assert.equal(parts.IsTruncated, false, 'all parts fit in one page');
       assert.deepEqual((parts.Parts ?? []).map(({ PartNumber, ETag }) => ({ PartNumber, ETag })), [p1, p2, p3], 'failed completions preserve parts');
       await withBucket(client, async ({ Bucket: otherBucket, retainForUploads: retainOtherUploads }) => {
@@ -93,7 +93,7 @@ export async function verifyCompleteMultipartUpload(client) {
       assert.equal(object.CacheControl, 'max-age=123', 'initiation CacheControl');
       assert.deepEqual(object.Metadata, { purpose: 'complete' }, 'initiation metadata');
       await reject(Key, id, [p1, p3], 404, 'NoSuchUpload', 'CompleteMultipartUpload completed upload');
-      await assertMissing(() => client.send(new ListPartsCommand({ Bucket, Key, UploadId: id })), 'ListParts completed upload', 'NoSuchUpload');
+      await assertPartsMissing(client, { Bucket, Key, UploadId: id }, 'completed upload');
       const survivor = await complete(Key, other, [otherPart]);
       assertStatus(survivor, 200, 'CompleteMultipartUpload independent upload');
       const overwritten = await client.send(new GetObjectCommand({ Bucket, Key }));

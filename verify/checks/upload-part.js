@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import {
   AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand,
-  DeleteBucketCommand, GetObjectCommand, ListPartsCommand, PutObjectCommand, UploadPartCommand,
+  DeleteBucketCommand, GetObjectCommand, PutObjectCommand, UploadPartCommand,
 } from '@aws-sdk/client-s3';
+import { listParts } from './list-parts.js';
 import { withUploadCleanup } from './multipart-cleanup.js';
 import { MISSING_BUCKET_UPLOAD_CODES, assertMissing, assertStatus, withBucket } from './resources.js';
 
@@ -31,8 +32,7 @@ export async function verifyUploadPart(client) {
         return response.ETag;
       };
       const list = async (key, uploadId, expected) => {
-        const response = await client.send(new ListPartsCommand({ Bucket, Key: key, UploadId: uploadId }));
-        assertStatus(response, 200, 'ListParts');
+        const response = await listParts(client, { Bucket, Key: key, UploadId: uploadId });
         assert.equal(response.IsTruncated, false, 'parts fit in one page');
         assert.deepEqual((response.Parts ?? []).map(({ PartNumber, ETag, Size }) => [PartNumber, ETag, Size]), expected, 'listed parts');
       };
@@ -73,8 +73,7 @@ export async function verifyUploadPart(client) {
           assertStatus(part, 200, 'UploadPart other bucket');
           assert.ok(typeof part.ETag === 'string' && part.ETag, 'other bucket part ETag');
           await assertMissing(() => client.send(new UploadPartCommand({ Bucket: otherBucket, Key, UploadId: id, PartNumber: 1, Body: last })), 'UploadPart wrong bucket', 'NoSuchUpload');
-          const parts = await client.send(new ListPartsCommand({ Bucket: otherBucket, Key, UploadId: created.UploadId }));
-          assertStatus(parts, 200, 'ListParts other bucket');
+          const parts = await listParts(client, { Bucket: otherBucket, Key, UploadId: created.UploadId });
           assert.equal(parts.IsTruncated, false, 'other bucket parts fit in one page');
           assert.deepEqual((parts.Parts ?? []).map(({ PartNumber, ETag, Size }) => [PartNumber, ETag, Size]), [[1, part.ETag, last.length]], 'other bucket part intact');
           await list(Key, id, [[1, firstTag, first.length], [2, secondTag, last.length], [10000, maxTag, 0]]);

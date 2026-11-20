@@ -17,11 +17,11 @@ export async function runVerification(client, suites, output = console, timeouts
       return false;
     }
 
-    const { failed, notRun } = await runTests(suites, { client }, output, { deadline });
+    const { failed, blocked, notRun } = await runTests(suites, { client }, output, { deadline });
     if (deadline?.signal.aborted) {
       output.error(`Run timeout of ${deadline.runTimeout} ms reached; ${notRun} checks not run`);
     }
-    return failed === 0 && !notRun;
+    return failed === 0 && !blocked && !notRun;
   } finally {
     deadline?.dispose();
     client.destroy();

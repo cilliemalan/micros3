@@ -81,7 +81,7 @@ test('runner awaits checks in order, reports failures, and continues', async () 
     ] },
   ];
 
-  assert.deepEqual(await runTests(suites, context, output), { passed: 2, failed: 2, notRun: 0 });
+  assert.deepEqual(await runTests(suites, context, output), { passed: 2, failed: 2, blocked: 0, notRun: 0 });
   assert.deepEqual(events, ['start', 'finish', 'sync', 'async', 'last']);
   assert.deepEqual(lines, [
     '\nFirst:',

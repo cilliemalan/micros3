@@ -26,6 +26,7 @@ It is meant to implement these operations with basic support:
   - [ ] CompleteMultipartUpload
   - [ ] AbortMultipartUpload
   - [ ] ListMultipartUploads
+  - [ ] ListParts
 - CORS:
   - [ ] PutBucketCors
   - [ ] GetBucketCors

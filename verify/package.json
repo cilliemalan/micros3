@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node index.js",
     "test": "node index.js",
-    "test:unit": "node --test test/infrastructure.test.js test/target.test.js test/cleanup.test.js test/bucket.test.js test/object.test.js test/copy-object.test.js test/put-get-object.test.js test/delete-object.test.js test/delete-objects.test.js test/listing.test.js test/create-multipart-upload.test.js test/upload-part.test.js test/list-multipart-uploads.test.js test/complete-multipart-upload.test.js test/abort-multipart-upload.test.js test/cors.test.js test/encryption.test.js test/timeouts.test.js"
+    "test:unit": "node --test test/infrastructure.test.js test/target.test.js test/cleanup.test.js test/bucket.test.js test/object.test.js test/copy-object.test.js test/put-get-object.test.js test/delete-object.test.js test/delete-objects.test.js test/listing.test.js test/create-multipart-upload.test.js test/upload-part.test.js test/list-parts.test.js test/list-multipart-uploads.test.js test/complete-multipart-upload.test.js test/abort-multipart-upload.test.js test/cors.test.js test/encryption.test.js test/timeouts.test.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1172.0",

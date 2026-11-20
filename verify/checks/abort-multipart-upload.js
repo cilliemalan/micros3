@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import {
   AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand,
-  DeleteBucketCommand, GetObjectCommand, ListMultipartUploadsCommand, ListPartsCommand,
+  DeleteBucketCommand, GetObjectCommand, ListMultipartUploadsCommand,
   PutObjectCommand, UploadPartCommand,
 } from '@aws-sdk/client-s3';
+import { assertPartsMissing, listParts } from './list-parts.js';
 import { withUploadCleanup } from './multipart-cleanup.js';
 import { MISSING_BUCKET_UPLOAD_CODES, assertMissing, assertStatus, withBucket } from './resources.js';
 
@@ -42,8 +43,7 @@ export async function verifyAbortMultipartUpload(client) {
         assert.deepEqual((result.Uploads ?? []).map(({ Key, UploadId }) => [Key, UploadId]).sort(), expected.sort(), 'remaining uploads');
       };
       const parts = async (Key, UploadId, ETag) => {
-        const result = await client.send(new ListPartsCommand({ Bucket, Key, UploadId }));
-        assertStatus(result, 200, 'ListParts');
+        const result = await listParts(client, { Bucket, Key, UploadId });
         assert.equal(result.IsTruncated, false, 'parts fit in one page');
         assert.deepEqual((result.Parts ?? []).map(p => [p.PartNumber, p.ETag]), [[1, ETag]], 'surviving parts');
       };
@@ -59,7 +59,7 @@ export async function verifyAbortMultipartUpload(client) {
       await parts(key, aborted, abortedETag);
       assertStatus(await client.send(new AbortMultipartUploadCommand({ Bucket, Key: key, UploadId: aborted })), 204, 'AbortMultipartUpload');
       await list([[key, survivor], [neighbor, adjacent]]);
-      await assertMissing(() => client.send(new ListPartsCommand({ Bucket, Key: key, UploadId: aborted })), 'ListParts aborted upload', 'NoSuchUpload');
+      await assertPartsMissing(client, { Bucket, Key: key, UploadId: aborted }, 'aborted upload');
       await assertMissing(() => client.send(new UploadPartCommand({ Bucket, Key: key, UploadId: aborted, PartNumber: 1, Body: body })), 'UploadPart aborted upload', 'NoSuchUpload');
       await assertMissing(() => client.send(new CompleteMultipartUploadCommand({ Bucket, Key: key, UploadId: aborted, MultipartUpload: { Parts: [{ PartNumber: 1, ETag: abortedETag }] } })), 'CompleteMultipartUpload aborted upload', 'NoSuchUpload');
       await assertMissing(() => client.send(new AbortMultipartUploadCommand({ Bucket, Key: key, UploadId: aborted })), 'repeat AbortMultipartUpload', 'NoSuchUpload');
@@ -93,8 +93,7 @@ export async function verifyAbortMultipartUpload(client) {
           assert.ok(otherPart.ETag, 'other bucket part ETag');
           await assertMissing(() => client.send(new AbortMultipartUploadCommand({ Bucket: otherBucket, Key: neighbor, UploadId: adjacent })), 'AbortMultipartUpload wrong bucket', 'NoSuchUpload');
           await parts(neighbor, adjacent, adjacentETag);
-          const otherParts = await client.send(new ListPartsCommand({ Bucket: otherBucket, Key: neighbor, UploadId: created.UploadId }));
-          assertStatus(otherParts, 200, 'ListParts other bucket');
+          const otherParts = await listParts(client, { Bucket: otherBucket, Key: neighbor, UploadId: created.UploadId });
           assert.equal(otherParts.IsTruncated, false, 'other bucket parts fit in one page');
           assert.deepEqual((otherParts.Parts ?? []).map(p => [p.PartNumber, p.ETag]), [[1, otherPart.ETag]], 'other bucket upload remains intact');
           await list([[neighbor, adjacent]]);
