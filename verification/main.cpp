@@ -1,7 +1,7 @@
-#include "micros3/hello.h"
+#include "verify.h"
 
 #include <iostream>
 
-int main() {
-    std::cout << micros3::hello() << '\n';
+int main(int argc, char *argv[]) {
+    return verification::run(argc, argv, std::cout, std::cerr);
 }

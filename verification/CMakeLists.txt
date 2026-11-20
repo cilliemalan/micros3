@@ -1,2 +1,2 @@
-add_executable(verify main.cpp)
+add_executable(verify main.cpp verify.cpp)
 target_link_libraries(verify PRIVATE libmicros3)
