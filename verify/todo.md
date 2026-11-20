@@ -5,8 +5,8 @@ The verifier will check the basic S3 operations listed in
 Floci instance to validate the verifier, using the endpoint, credentials, and
 region supplied by `../floci.env` (loaded with `-e` or `--env`). Then use the
 same checks against MicroS3 as its operations are implemented. The program
-checks the connection on startup, then runs failing stubs for the operation checks
-below. The actual operation checks are still to be implemented.
+checks the connection on startup, then runs the operation checks below. Bucket
+checks are implemented; the other operation checks remain failing stubs.
 
 ## Setup and cleanup
 
@@ -17,11 +17,14 @@ below. The actual operation checks are still to be implemented.
 
 ## Bucket operations
 
-- [ ] **CreateBucket**: create a bucket and check the response.
-- [ ] **ListBuckets**: confirm the created bucket appears in the list.
-- [ ] **HeadBucket**: confirm the created bucket exists; check a missing bucket.
-- [ ] **GetBucketLocation**: check the created bucket's location.
-- [ ] **DeleteBucket**: delete an empty bucket and confirm it is gone.
+- [x] **CreateBucket**: create a bucket and check the response, reject an invalid
+      name, and verify repeat creation preserves existing content.
+- [x] **ListBuckets**: confirm two created buckets appear in the list, following
+      continuation tokens when necessary.
+- [x] **HeadBucket**: confirm the created bucket exists; check a missing bucket.
+- [x] **GetBucketLocation**: check the created bucket's location and a missing bucket.
+- [x] **DeleteBucket**: delete an empty bucket and confirm it is gone; reject
+      deletion of a non-empty bucket and preserve its object.
 
 ## Object operations
 

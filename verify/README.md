@@ -6,10 +6,11 @@ Floci instance to validate the verifier before checking MicroS3. See
 [todo.md](todo.md) for the planned checks.
 
 The verifier first calls ListBuckets to check the S3 connection, then runs the
-operation checks in sequence and reports each result and a summary. All operation
-checks are currently failing stubs; they do not yet exercise the operations or
-create resources. A connection error stops the run, and any connection or test
-failure gives a nonzero exit status.
+operation checks in sequence and reports each result and a summary. Implemented
+checks cover bucket creation, listing, existence, location and deletion,
+including invalid names, repeat creation, missing buckets and non-empty buckets.
+The other operation checks are still failing stubs. A connection error stops the
+run, and any connection or check failure gives a nonzero exit status.
 
 Install Node.js 20 or newer and pnpm, then install dependencies and run the program:
 
@@ -37,6 +38,18 @@ environment file.
 `pnpm start` is an alias for the verifier and accepts the same options. Without
 a custom endpoint, the AWS SDK uses its default AWS S3 endpoint and credentials,
 so ensure the intended endpoint and credentials are configured before running.
+The bucket checks create uniquely named buckets and temporary objects. They
+attempt cleanup even after failures; cleanup errors identify the affected
+resources, which may need manual removal. A rejected creation is not cleaned up
+when the response could indicate a bucket owned by someone else; after an
+ambiguous SDK retry, manually inspect the named bucket. The repeat-creation and
+non-empty deletion checks also require PutObject, GetObject and DeleteObject
+support. The bucket listing check follows up to 1,000 pages when looking for its
+two test buckets.
+
+The configured Floci instance currently accepts invalid bucket names, so the
+invalid-name check fails against it. The check is retained to verify S3 naming
+rules.
 
 ## Implementing checks
 
@@ -47,6 +60,6 @@ continues after failures, so each implemented test should manage its own setup,
 use isolated resource names, and clean up resources in `finally` even if an
 assertion fails. Add new sections to the suite list in `index.js`.
 
-Run `pnpm test:unit` to test the runner and startup behavior offline using a
-local mock HTTP server. This does not run the S3 operation checks against a
+Run `pnpm test:unit` to test the runner, startup behavior and bucket checks
+offline using mock services. This does not run the S3 operation checks against a
 real endpoint.
