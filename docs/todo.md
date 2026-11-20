@@ -25,11 +25,11 @@ All are recorded in design.md. Nothing here is open.
 
 ## Phase 1: Skeleton
 
-- [ ] Add the third-party libraries with `FetchContent`, as design.md's "Third-party libraries" table gives them. Pin each to its tag or URL hash.
-  - [ ] SQLite: download `https://www.sqlite.org/2026/sqlite-amalgamation-3540100.zip` with `URL_HASH SHA3_256=92281c86e2957f9b9305890f9ac04204caa7b677cc868dc326d942689df28e30`. Build `sqlite3.c` as a static library. If the minimum CMake version cannot check SHA3, raise `cmake_minimum_required` (currently 3.20).
-  - [ ] nlohmann/json v3.12.0, pugixml v1.16, zlib v1.3.1, and Mbed TLS mbedtls-3.6.8 (its tests and programs off).
-  - [ ] Each non-uWebSockets library built static, with its tests and programs turned off.
-  - [ ] Check that Mbed TLS builds without extra tools on the Alpine builder.
+- [x] Add the third-party libraries with `FetchContent`, as design.md's "Third-party libraries" table gives them. Pin each to its tag or URL hash.
+  - [x] SQLite: download `https://www.sqlite.org/2026/sqlite-amalgamation-3540100.zip` with `URL_HASH SHA3_256=92281c86e2957f9b9305890f9ac04204caa7b677cc868dc326d942689df28e30`. Build `sqlite3.c` as a static library. If the minimum CMake version cannot check SHA3, raise `cmake_minimum_required` (currently 3.20).
+  - [x] nlohmann/json v3.12.0, pugixml v1.16, zlib v1.3.1, and Mbed TLS mbedtls-3.6.8 (its tests and programs off).
+  - [x] Each non-uWebSockets library built static, with its tests and programs turned off.
+  - [x] Check that Mbed TLS builds without extra tools on the Alpine builder. (Checked on `alpine:3.22` with only `build-base cmake git linux-headers`: no Python or Perl needed, since `GEN_FILES` is off.)
 - [ ] Keep `libmicros3` for the server code, and drop `lib/hello.*` once the server stops using it.
 - [ ] Credentials from `MICROS3_ACCESS_KEY_ID` and `MICROS3_SECRET_ACCESS_KEY` only (defaults `test`/`test`), with no flags.
 - [ ] Options: `--data-dir` and `--port`, with environment variables `MICROS3_DATA_DIR` (default `./data`) and `MICROS3_PORT` (default 3923). Flags beat environment variables, which beat defaults. Reject an invalid port with a usage error and a non-zero exit.
@@ -159,7 +159,7 @@ All are recorded in design.md. Nothing here is open.
 
 - [ ] Replace `test/hello_test.cpp` with store tests: UTF-8 byte order for listings, continuation token encoding, single-part and multipart ETags, XML escaping, the BadDigest and InvalidDigest rules, bucket-name validation, and Range parsing and 206/416 results.
 - [ ] SigV4 signing against AWS's published test vectors (Phase 1).
-- [ ] MD5, SHA-256, CRC32 and base64 results checked against known vectors, to confirm the wiring to the libraries.
+- [x] MD5, SHA-256, CRC32 and base64 results checked against known vectors, to confirm the wiring to the libraries. (`test/digest_test.cpp`, which also checks HMAC-SHA256 against RFC 4231.)
 - [ ] Persistence script (`test/persistence.sh`): create a bucket and an object, stop, restart on the same data directory, read the object back.
 - [ ] Crash-safety script (`test/crash.sh`): start a large PutObject with `curl --limit-rate` so it runs for a while, send SIGKILL mid-upload, restart. The object must be absent or complete, and `staging/` must be empty.
 - [ ] Static-link check: `file` and `ldd` on the release binary.
