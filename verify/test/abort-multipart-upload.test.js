@@ -96,8 +96,23 @@ test('AbortMultipartUpload accepts NoSuchUpload for an upload in a missing bucke
   assert.equal(client.buckets.size, 0);
 });
 
+test('AbortMultipartUpload accepts an idempotent repeated abort', async () => {
+  // AWS answers a repeated abort with 204; NoSuchUpload is equally acceptable.
+  const repeated = new Set();
+  const client = new FakeS3(async (command, service, next) => {
+    if (!(command instanceof AbortMultipartUploadCommand) || !service.buckets.has(command.input.Bucket)) return next();
+    const id = JSON.stringify([command.input.Key, command.input.UploadId]);
+    if (repeated.has(id)) return ok(204);
+    const result = await next();
+    repeated.add(id);
+    return result;
+  });
+  await run({ client });
+  assert.equal(client.buckets.size, 0);
+});
+
 test('AbortMultipartUpload detects incorrect status, errors, state and isolation', async () => {
-  for (const mode of ['abort status', 'wrong key accepted', 'abort retained', 'same-key lost', 'neighbor lost', 'list truncated', 'parts retained', 'upload accepted', 'complete accepted', 'repeat accepted', 'missing accepted', 'old content', 'old headers', 'neighbor object', 'survivor parts', 'neighbor parts', 'survivor content', 'empty abort', 'wrong bucket accepted', 'other bucket parts', 'missing bucket', 'missing bucket code']) {
+  for (const mode of ['abort status', 'wrong key accepted', 'abort retained', 'same-key lost', 'neighbor lost', 'list truncated', 'parts retained', 'upload accepted', 'complete accepted', 'repeat deletes survivor', 'repeat status', 'missing accepted', 'old content', 'old headers', 'neighbor object', 'survivor parts', 'neighbor parts', 'survivor content', 'empty abort', 'wrong bucket accepted', 'other bucket parts', 'missing bucket', 'missing bucket code']) {
     let aborts = 0;
     let lists = 0;
     let partLists = 0;
@@ -119,7 +134,11 @@ test('AbortMultipartUpload detects incorrect status, errors, state and isolation
           if (mode === 'neighbor lost') service.buckets.get(command.input.Bucket).uploads.delete('upload-3');
           return result;
         }
-        if (aborts === 3 && mode === 'repeat accepted') return ok(204);
+        if (aborts === 3 && mode === 'repeat deletes survivor') {
+          service.buckets.get(command.input.Bucket).uploads.delete('upload-2');
+          return ok(204);
+        }
+        if (aborts === 3 && mode === 'repeat status') return ok(200);
         if (aborts === 4 && mode === 'missing accepted') return ok(204);
         if (aborts === 5 && mode === 'empty abort') return ok(200);
         if (aborts === 6 && mode === 'wrong bucket accepted') return ok(204);
@@ -133,7 +152,7 @@ test('AbortMultipartUpload detects incorrect status, errors, state and isolation
         partLists++;
         if (partLists === 2 && mode === 'parts retained') return ok(200, { IsTruncated: false, Parts: [] });
         const result = await next();
-        if ((partLists === 3 && mode === 'survivor parts') || (partLists === 4 && mode === 'neighbor parts') || (partLists === 6 && mode === 'other bucket parts')) result.Parts = [];
+        if ((partLists === 4 && mode === 'survivor parts') || (partLists === 5 && mode === 'neighbor parts') || (partLists === 7 && mode === 'other bucket parts')) result.Parts = [];
         return result;
       }
       if (command instanceof UploadPartCommand && command.input.UploadId === 'upload-1' && service.calls.filter(c => c instanceof UploadPartCommand && c.input.UploadId === 'upload-1').length === 2 && mode === 'upload accepted') return ok(200);

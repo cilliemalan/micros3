@@ -6,7 +6,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { assertPartsMissing, listParts } from './list-parts.js';
 import { withUploadCleanup } from './multipart-cleanup.js';
-import { MISSING_BUCKET_UPLOAD_CODES, assertMissing, assertStatus, withBucket } from './resources.js';
+import { MISSING_BUCKET_UPLOAD_CODES, assertMissing, assertStatus, status, withBucket } from './resources.js';
 
 export async function verifyAbortMultipartUpload(client) {
   await withBucket(client, async ({ Bucket, retainForUploads }) => {
@@ -62,7 +62,17 @@ export async function verifyAbortMultipartUpload(client) {
       await assertPartsMissing(client, { Bucket, Key: key, UploadId: aborted }, 'aborted upload');
       await assertMissing(() => client.send(new UploadPartCommand({ Bucket, Key: key, UploadId: aborted, PartNumber: 1, Body: body })), 'UploadPart aborted upload', 'NoSuchUpload');
       await assertMissing(() => client.send(new CompleteMultipartUploadCommand({ Bucket, Key: key, UploadId: aborted, MultipartUpload: { Parts: [{ PartNumber: 1, ETag: abortedETag }] } })), 'CompleteMultipartUpload aborted upload', 'NoSuchUpload');
-      await assertMissing(() => client.send(new AbortMultipartUploadCommand({ Bucket, Key: key, UploadId: aborted })), 'repeat AbortMultipartUpload', 'NoSuchUpload');
+      // A repeated abort is idempotent on AWS (204); other implementations may reject it as
+      // NoSuchUpload. Either way the upload must stay gone.
+      let repeatedAbort;
+      try {
+        repeatedAbort = await client.send(new AbortMultipartUploadCommand({ Bucket, Key: key, UploadId: aborted }));
+      } catch (error) {
+        assert.equal(status(error), 404, 'repeat AbortMultipartUpload HTTP status');
+        assert.equal(error.name, 'NoSuchUpload', 'repeat AbortMultipartUpload error code');
+      }
+      if (repeatedAbort) assertStatus(repeatedAbort, 204, 'repeat AbortMultipartUpload HTTP status');
+      await assertPartsMissing(client, { Bucket, Key: key, UploadId: aborted }, 'repeated abort');
       await assertMissing(() => client.send(new AbortMultipartUploadCommand({ Bucket, Key: key, UploadId: 'nonexistent-upload-id' })), 'AbortMultipartUpload missing upload', 'NoSuchUpload');
       await getOld();
       await assertMissing(() => client.send(new GetObjectCommand({ Bucket, Key: neighbor })), 'uncompleted neighbor object', 'NoSuchKey');
