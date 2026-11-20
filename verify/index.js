@@ -2,6 +2,7 @@ import { parseArgs } from 'node:util';
 import dotenv from 'dotenv';
 import { S3Client } from '@aws-sdk/client-s3';
 import { runVerification } from './verification.js';
+import { TargetError, describeTarget, resolveTarget } from './target.js';
 import bucketTests from './checks/bucket.js';
 import objectTests from './checks/object.js';
 import listingTests from './checks/listing.js';
@@ -9,13 +10,22 @@ import multipartTests from './checks/multipart.js';
 import corsTests from './checks/cors.js';
 import encryptionTests from './checks/encryption.js';
 
-function loadEnvFile() {
-  const { values: { env } } = parseArgs({
-    options: {
-      env: { type: 'string', short: 'e' },
-    },
-  });
+function parseOptions() {
+  try {
+    return parseArgs({
+      options: {
+        env: { type: 'string', short: 'e' },
+        endpoint: { type: 'string' },
+        aws: { type: 'boolean', default: false },
+      },
+    }).values;
+  } catch (error) {
+    console.error(error.message);
+    return undefined;
+  }
+}
 
+function loadEnvFile(env) {
   if (!env) {
     return true;
   }
@@ -28,6 +38,26 @@ function loadEnvFile() {
   return !error;
 }
 
+function selectTarget(options) {
+  try {
+    return resolveTarget(options, process.env);
+  } catch (error) {
+    if (error instanceof TargetError) {
+      console.error(error.message);
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function resolveRegion(client) {
+  try {
+    return await client.config.region();
+  } catch {
+    return undefined;
+  }
+}
+
 const suites = [
   { name: 'Bucket operations', tests: bucketTests },
   { name: 'Object operations', tests: objectTests },
@@ -37,17 +67,33 @@ const suites = [
   { name: 'Encryption', tests: encryptionTests },
 ];
 
-if (!loadEnvFile()) {
+const options = parseOptions();
+
+if (!options) {
+  process.exitCode = 1;
+} else if (!loadEnvFile(options.env)) {
   console.error('Failed to load environment file');
   process.exitCode = 1;
 } else {
-  const client = new S3Client({
-    endpoint: process.env.AWS_ENDPOINT_URL,
-    region: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION,
-    forcePathStyle: true,
-  });
-
-  if (!await runVerification(client, suites)) {
+  const target = selectTarget(options);
+  if (!target) {
+    console.error('Refusing to run without an explicit target');
     process.exitCode = 1;
+  } else {
+    if (target.aws) {
+      // Use the real default endpoint that was opted into, not an endpoint_url
+      // from the shared AWS config file that would not be shown to the user.
+      process.env.AWS_IGNORE_CONFIGURED_ENDPOINT_URLS = 'true';
+    }
+    const client = new S3Client({
+      endpoint: target.endpoint,
+      region: target.region,
+      forcePathStyle: true,
+    });
+
+    console.log(describeTarget(target, await resolveRegion(client)));
+    if (!await runVerification(client, suites)) {
+      process.exitCode = 1;
+    }
   }
 }

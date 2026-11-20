@@ -77,9 +77,17 @@ credential provider chain; `AWS_REGION` takes precedence over
 `AWS_DEFAULT_REGION`. Existing environment variables are not overwritten by the
 environment file.
 
-`pnpm start` is an alias for the verifier and accepts the same options. Without
-a custom endpoint, the AWS SDK uses its default AWS S3 endpoint and credentials,
-so ensure the intended endpoint and credentials are configured before running.
+The verifier requires an explicit endpoint. It is taken from `--endpoint <url>`,
+then `AWS_ENDPOINT_URL_S3`, then `AWS_ENDPOINT_URL`, and must be an http or https
+URL. An `endpoint_url` in the shared AWS config file is not accepted as explicit.
+Without an endpoint the verifier refuses to run, unless `--aws` is passed to opt
+into the default AWS S3 endpoint; this creates real buckets with your default
+credentials and may incur charges. In that mode configured endpoint URLs are
+ignored, and `--aws` combined with an endpoint is rejected as ambiguous. The
+selected target, its source and the region are printed before any request is
+made.
+
+`pnpm start` is an alias for the verifier and accepts the same options.
 The bucket, object, listing, multipart, CORS and encryption checks create uniquely
 named buckets and temporary objects, uploads or CORS configurations. Object keys
 are isolated by their per-check buckets. Cleanup is attempted even after failures;
@@ -135,7 +143,8 @@ continues after failures, so each implemented test should manage its own setup,
 use isolated resource names, and clean up resources in `finally` even if an
 assertion fails. Add new sections to the suite list in `index.js`.
 
-Run `pnpm test:unit` to test the runner, startup behavior, resource isolation and
+Run `pnpm test:unit` to test the runner, startup behavior (including target
+selection and the endpoint guard), resource isolation and
 cleanup (including lost responses, malformed listings, failed deletions and
 retained buckets), and the operation checks offline using mock services. This does
 not run the S3 operation checks against a real endpoint.

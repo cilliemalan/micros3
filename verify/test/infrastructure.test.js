@@ -189,3 +189,127 @@ test('verifier stops when the requested env file cannot be loaded', async t => {
   assert.match(result.stderr, /Failed to load environment file/);
   assert.doesNotMatch(result.stdout, /Bucket operations:|Results:/);
 });
+
+async function startDeniedServer(t) {
+  const requests = [];
+  const endpoint = await startServer(t, (request, response) => {
+    requests.push({ method: request.method, url: request.url });
+    response.writeHead(403, { 'Content-Type': 'application/xml' });
+    response.end('<Error><Code>AccessDenied</Code><Message>Denied</Message></Error>');
+  });
+  return { endpoint, requests };
+}
+
+async function tempDirectory(t) {
+  const directory = await mkdtemp(join(tmpdir(), 'micros3-verify-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  return directory;
+}
+
+function assertRefused(result) {
+  assert.equal(result.signal, null);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Refusing to run without an explicit target/);
+  assert.doesNotMatch(result.stdout, /Target:|Bucket operations:|Results:/);
+  assert.doesNotMatch(result.stderr, /Initial check failed/);
+}
+
+test('verifier refuses to use the default endpoint without an opt-in', async t => {
+  // A shared-config endpoint_url is not shown to the user, so it must not
+  // count as an explicit endpoint either.
+  const { endpoint, requests } = await startDeniedServer(t);
+  const directory = await tempDirectory(t);
+  const configFile = join(directory, 'config');
+  await writeFile(configFile, `[default]\nregion = us-east-1\nendpoint_url = ${endpoint}\n`);
+
+  const result = await runVerifier([], verifierEnvironment({
+    AWS_CONFIG_FILE: configFile,
+    AWS_DEFAULT_REGION: 'us-east-1',
+  }));
+  assertRefused(result);
+  assert.match(result.stderr, /No S3 endpoint configured.*--aws/);
+  assert.deepEqual(requests, []);
+});
+
+test('verifier refuses an endpoint combined with the AWS opt-in', async t => {
+  const { endpoint, requests } = await startDeniedServer(t);
+  const result = await runVerifier(['--aws'], verifierEnvironment({
+    AWS_ENDPOINT_URL: endpoint,
+    AWS_DEFAULT_REGION: 'us-east-1',
+  }));
+  assertRefused(result);
+  assert.match(result.stderr, /--aws .* AWS_ENDPOINT_URL/);
+  assert.deepEqual(requests, []);
+});
+
+test('verifier refuses an invalid endpoint and unknown options', async () => {
+  const invalid = await runVerifier([], verifierEnvironment({ AWS_ENDPOINT_URL: 'localhost:4566' }));
+  assertRefused(invalid);
+  assert.match(invalid.stderr, /must use http or https/);
+
+  const unknown = await runVerifier(['--endpiont', 'http://127.0.0.1:1'], verifierEnvironment());
+  assert.equal(unknown.code, 1);
+  assert.match(unknown.stderr, /Unknown option '--endpiont'/);
+  assert.doesNotMatch(unknown.stdout, /Target:|Results:/);
+});
+
+test('verifier shows the target before its first request', async t => {
+  const { endpoint, requests } = await startDeniedServer(t);
+  const result = await runVerifier([], verifierEnvironment({
+    AWS_ENDPOINT_URL: endpoint,
+    AWS_REGION: 'eu-west-1',
+    AWS_DEFAULT_REGION: 'us-east-1',
+  }));
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout.split('\n')[0],
+    `Target: ${endpoint} (from AWS_ENDPOINT_URL), region eu-west-1`);
+  assert.equal(requests.length, 1);
+  assert.match(result.stderr, /Initial check failed/);
+});
+
+test('verifier endpoint precedence: option, then S3 variable, then generic variable', async t => {
+  const cli = await startDeniedServer(t);
+  const specific = await startDeniedServer(t);
+  const generic = await startDeniedServer(t);
+  const env = verifierEnvironment({
+    AWS_ENDPOINT_URL_S3: specific.endpoint,
+    AWS_ENDPOINT_URL: generic.endpoint,
+    AWS_DEFAULT_REGION: 'us-east-1',
+  });
+
+  const fromOption = await runVerifier(['--endpoint', cli.endpoint], env);
+  assert.match(fromOption.stdout, new RegExp(`^Target: ${cli.endpoint} \\(from --endpoint\\)`));
+  assert.deepEqual([cli, specific, generic].map(s => s.requests.length), [1, 0, 0]);
+
+  const fromSpecific = await runVerifier([], env);
+  assert.match(fromSpecific.stdout, /\(from AWS_ENDPOINT_URL_S3\)/);
+  assert.deepEqual([cli, specific, generic].map(s => s.requests.length), [1, 1, 0]);
+
+  const { AWS_ENDPOINT_URL_S3, ...genericOnly } = env;
+  const fromGeneric = await runVerifier([], genericOnly);
+  assert.match(fromGeneric.stdout, /\(from AWS_ENDPOINT_URL\)/);
+  assert.deepEqual([cli, specific, generic].map(s => s.requests.length), [1, 1, 1]);
+});
+
+test('verifier environment variables take precedence over the env file', async t => {
+  const fromProcess = await startDeniedServer(t);
+  const fromFile = await startDeniedServer(t);
+  const directory = await tempDirectory(t);
+  const envFile = join(directory, 'target.env');
+  await writeFile(envFile,
+    `AWS_ENDPOINT_URL=${fromFile.endpoint}\nAWS_REGION=eu-west-1\nAWS_DEFAULT_REGION=eu-west-1\n`);
+
+  const result = await runVerifier(['-e', envFile], verifierEnvironment({
+    AWS_ENDPOINT_URL: fromProcess.endpoint,
+    AWS_REGION: 'us-east-2',
+  }));
+  assert.equal(result.stdout.split('\n')[0],
+    `Target: ${fromProcess.endpoint} (from AWS_ENDPOINT_URL), region us-east-2`);
+  assert.equal(fromProcess.requests.length, 1);
+  assert.equal(fromFile.requests.length, 0);
+
+  const fileOnly = await runVerifier(['-e', envFile], verifierEnvironment());
+  assert.equal(fileOnly.stdout.split('\n')[0],
+    `Target: ${fromFile.endpoint} (from AWS_ENDPOINT_URL), region eu-west-1`);
+  assert.equal(fromFile.requests.length, 1);
+});

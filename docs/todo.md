@@ -132,10 +132,14 @@ CreateMultipartUpload, UploadPart, ListMultipartUploads, CompleteMultipartUpload
 
 ### Operational safety
 
-- [ ] Require an explicit endpoint or an explicit opt-in before using the AWS
+- [x] Require an explicit endpoint or an explicit opt-in before using the AWS
       default endpoint, and show the selected target before creating resources.
       The current default credential chain can otherwise create real buckets
       and incur charges. Add tests for the guard and environment precedence.
+      [target.js](../verify/target.js) resolves `--endpoint`, then
+      `AWS_ENDPOINT_URL_S3`, then `AWS_ENDPOINT_URL`; otherwise `--aws` is
+      required (and ignores shared-config `endpoint_url`). The target is printed
+      before the connection check.
 - [ ] Add bounded request and run timeouts with cleanup-aware cancellation and
       tests for hung requests. Preserve resource identifiers and the current
       conservative multipart cleanup behavior when completion is uncertain.
