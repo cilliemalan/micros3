@@ -54,7 +54,7 @@ Both listeners run on the same uWebSockets event loop, on one thread. The store 
 
 `Server::run` currently owns one uWebSockets app with one service. It needs to host two listeners, each with its own service: the S3 service on `--port` and the UI service on `--ui-port`.
 
-Before implementation, check that uWebSockets 20.81 can run two listening apps on one loop. If it cannot, use one app with two listen calls, or fall back to a second thread with its own loop. The second thread would also need its own `Store` access rules, so it is the last choice.
+**Checked (U2):** uWebSockets 20.81 runs two listening apps on one loop. The loop is per thread (`uWS::Loop::get()`), and each `uWS::App` adds its own socket context to it. `Server` now takes one service per listener, creates one app per listener, and runs the shared loop. Listening uses `LIBUS_LISTEN_EXCLUSIVE_PORT`, because uSockets otherwise sets `SO_REUSEPORT` and a second process could share a port in use instead of failing to bind.
 
 Startup binds both ports. If either fails to bind, the server logs the error and exits with status 1. Equal ports are a usage error with status 2.
 
@@ -220,4 +220,4 @@ The test target links `libmicros3`, so it builds the UI too.
 
 ## Status
 
-The design is settled: UI1 to UI8, with the guards in UI6. No code has been written. The steps are in [todo.md](todo.md), under "Web UI".
+The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3). The UI port answers only `GET /api/health` so far. The steps are in [todo.md](todo.md), under "Web UI".

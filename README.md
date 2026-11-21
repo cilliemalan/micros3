@@ -35,12 +35,15 @@ ooo/micros3 --data-dir ./data --port 3923
 The server listens on `http://localhost:3923/`, without TLS. Clients must use
 path-style addressing (`http://localhost:3923/<bucket>/<key>`) and sign their
 requests with AWS Signature Version 4 in the `Authorization` header. Any region
-is accepted.
+is accepted. A second listener, for the web UI that is being built, answers on
+`http://localhost:3924/`. It has no authentication, so do not expose it to
+untrusted networks.
 
 | Setting | Flag | Environment variable | Default |
 | --- | --- | --- | --- |
 | Data directory | `--data-dir <path>` | `MICROS3_DATA_DIR` | `./data` |
-| Port | `--port <n>` | `MICROS3_PORT` | `3923` |
+| S3 port | `--port <n>` | `MICROS3_PORT` | `3923` |
+| UI port (must differ from the S3 port) | `--ui-port <n>` | `MICROS3_UI_PORT` | `3924` |
 | Access key ID | | `MICROS3_ACCESS_KEY_ID` | `test` |
 | Secret access key | | `MICROS3_SECRET_ACCESS_KEY` | `test` |
 

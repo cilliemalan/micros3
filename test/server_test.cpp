@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <random>
 #include <regex>
+#include <stdexcept>
 #include <tuple>
 #include <string>
 #include <thread>
@@ -204,6 +205,91 @@ TEST(Server, KeepAliveServesSeveralRequests) {
                                           "Content-Length: 2\r\n\r\nde");
     EXPECT_NE(response.find("bytes=3"), std::string::npos) << response;
     EXPECT_NE(response.find("bytes=2"), std::string::npos) << response;
+}
+
+// A fixed answer, to tell listeners apart.
+class NamedService : public micros3::http::Service {
+public:
+    explicit NamedService(std::string name) : name_(std::move(name)) {}
+    std::unique_ptr<micros3::http::Exchange> begin(const micros3::http::Request &) override {
+        micros3::http::Response response;
+        response.body = name_;
+        return std::make_unique<micros3::http::FixedExchange>(response);
+    }
+
+private:
+    std::string name_;
+};
+
+// A server with two listeners, on free ports, run on its own thread.
+class TwoListenerServer {
+public:
+    TwoListenerServer(micros3::http::Service &first, micros3::http::Service &second)
+        : server_({&first, &second}) {
+        std::promise<std::vector<int>> bound;
+        auto future = bound.get_future();
+        thread_ = std::thread([this, &bound] {
+            server_.run({0, 0}, [&bound](const std::vector<int> &ports) { bound.set_value(ports); });
+        });
+        ports_ = future.get();
+    }
+    ~TwoListenerServer() {
+        server_.stop();
+        thread_.join();
+    }
+    const std::vector<int> &ports() const { return ports_; }
+
+private:
+    micros3::Server server_;
+    std::thread thread_;
+    std::vector<int> ports_;
+};
+
+std::string simple_get(int port) {
+    return exchange(port, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+}
+
+TEST(Server, TwoListenersEachAnswerWithTheirOwnService) {
+    NamedService s3("s3"), ui("ui");
+    TwoListenerServer server(s3, ui);
+    ASSERT_EQ(server.ports().size(), 2u);
+    ASSERT_NE(server.ports()[0], 0);
+    ASSERT_NE(server.ports()[1], 0);
+    EXPECT_NE(server.ports()[0], server.ports()[1]);
+    for (int round = 0; round < 3; ++round) {
+        EXPECT_EQ(body_of(simple_get(server.ports()[0])), "s3");
+        EXPECT_EQ(body_of(simple_get(server.ports()[1])), "ui");
+    }
+}
+
+TEST(Server, FailsWhenOneListenerCannotBind) {
+    NamedService s3("s3"), ui("ui");
+    // Hold a port with a listener of our own.
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(fd, 0);
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_ANY);
+    ASSERT_EQ(::bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof address), 0);
+    ASSERT_EQ(::listen(fd, 1), 0);
+    socklen_t length = sizeof address;
+    ASSERT_EQ(::getsockname(fd, reinterpret_cast<sockaddr *>(&address), &length), 0);
+    const auto port = ntohs(address.sin_port);
+
+    micros3::Server server({&s3, &ui});
+    std::vector<int> reported;
+    const bool ok = server.run({0, port}, [&reported](const std::vector<int> &ports) { reported = ports; });
+    ::close(fd);
+    EXPECT_FALSE(ok);
+    ASSERT_EQ(reported.size(), 2u);
+    EXPECT_NE(reported[0], 0);
+    EXPECT_EQ(reported[1], 0);
+}
+
+TEST(Server, PortCountMustMatchServiceCount) {
+    NamedService s3("s3"), ui("ui");
+    micros3::Server server({&s3, &ui});
+    EXPECT_THROW(server.run(std::uint16_t{0}, [](int) {}), std::invalid_argument);
 }
 
 const micros3::sigv4::Credentials kCredentials{"test", "test"};

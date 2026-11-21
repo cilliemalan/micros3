@@ -3,6 +3,7 @@
 #include "micros3/server.h"
 #include "micros3/service.h"
 #include "micros3/store.h"
+#include "micros3/ui_api.h"
 
 #include <exception>
 #include <memory>
@@ -10,6 +11,7 @@
 #include <iostream>
 #include <string>
 #include <variant>
+#include <vector>
 
 int main(int argc, char **argv) {
     namespace config = micros3::config;
@@ -39,14 +41,17 @@ int main(int argc, char **argv) {
                   << scan.orphan_blobs_removed << " unreferenced blob(s)" << std::endl;
     }
 
-    micros3::S3Service service(*store, {cfg.access_key_id, cfg.secret_access_key});
-    micros3::Server server(service);
-    const bool listening = server.run(cfg.port, [&cfg](int port) {
-        if (port != 0) {
-            std::cout << "Listening on port " << port << " with data directory " << cfg.data_dir << std::endl;
-        } else {
-            std::cerr << "Failed to listen on port " << cfg.port << std::endl;
+    micros3::S3Service s3_service(*store, {cfg.access_key_id, cfg.secret_access_key});
+    micros3::UiService ui_service(*store);
+    micros3::Server server({&s3_service, &ui_service});
+    const bool listening = server.run({cfg.port, cfg.ui_port}, [&cfg](const std::vector<int> &bound) {
+        if (bound[0] != 0 && bound[1] != 0) {
+            std::cout << "Listening on port " << bound[0] << " (S3) and port " << bound[1]
+                      << " (UI) with data directory " << cfg.data_dir << std::endl;
+            return;
         }
+        if (bound[0] == 0) std::cerr << "Failed to listen on port " << cfg.port << " (S3)" << std::endl;
+        if (bound[1] == 0) std::cerr << "Failed to listen on port " << cfg.ui_port << " (UI)" << std::endl;
     });
     return listening ? 0 : 1;
 }

@@ -31,11 +31,13 @@ std::optional<std::uint16_t> parse_port(const std::string &text) {
 
 std::string usage(const std::string &program) {
     return "Usage: " + program +
-           " [--data-dir <path>] [--port <n>]\n"
+           " [--data-dir <path>] [--port <n>] [--ui-port <n>]\n"
            "\n"
            "Options:\n"
            "  --data-dir <path>  Data directory (env MICROS3_DATA_DIR, default ./data)\n"
-           "  --port <n>         Listening port, 1 to 65535 (env MICROS3_PORT, default 3923)\n"
+           "  --port <n>         S3 API port, 1 to 65535 (env MICROS3_PORT, default 3923)\n"
+           "  --ui-port <n>      Web UI port, 1 to 65535, not the S3 port\n"
+           "                     (env MICROS3_UI_PORT, default 3924)\n"
            "  -h, --help         Show this help\n"
            "\n"
            "Credentials come from MICROS3_ACCESS_KEY_ID and MICROS3_SECRET_ACCESS_KEY\n"
@@ -58,7 +60,7 @@ ParseResult parse(int argc, const char *const *argv, const EnvLookup &env) {
         return UsageError{"MICROS3_SECRET_ACCESS_KEY must not be empty"};
     }
 
-    // An empty MICROS3_DATA_DIR or MICROS3_PORT counts as unset.
+    // An empty MICROS3_DATA_DIR, MICROS3_PORT or MICROS3_UI_PORT counts as unset.
     auto non_empty = [&env](const char *name) -> std::optional<std::string> {
         auto value = env(name);
         if (value && value->empty()) {
@@ -68,7 +70,9 @@ ParseResult parse(int argc, const char *const *argv, const EnvLookup &env) {
     };
     std::optional<std::string> data_dir = non_empty("MICROS3_DATA_DIR");
     std::optional<std::string> port_text = non_empty("MICROS3_PORT");
+    std::optional<std::string> ui_port_text = non_empty("MICROS3_UI_PORT");
     const char *port_source = "MICROS3_PORT";
+    const char *ui_port_source = "MICROS3_UI_PORT";
     const char *data_dir_source = "MICROS3_DATA_DIR";
 
     for (int i = 1; i < argc; ++i) {
@@ -83,7 +87,7 @@ ParseResult parse(int argc, const char *const *argv, const EnvLookup &env) {
             name = arg.substr(0, eq);
             value = arg.substr(eq + 1);
         }
-        if (name != "--data-dir" && name != "--port") {
+        if (name != "--data-dir" && name != "--port" && name != "--ui-port") {
             return UsageError{"unknown argument: " + arg};
         }
         if (!value) {
@@ -95,9 +99,12 @@ ParseResult parse(int argc, const char *const *argv, const EnvLookup &env) {
         if (name == "--data-dir") {
             data_dir = value;
             data_dir_source = "--data-dir";
-        } else {
+        } else if (name == "--port") {
             port_text = value;
             port_source = "--port";
+        } else {
+            ui_port_text = value;
+            ui_port_source = "--ui-port";
         }
     }
 
@@ -114,6 +121,18 @@ ParseResult parse(int argc, const char *const *argv, const EnvLookup &env) {
                               "' (expected 1 to 65535)"};
         }
         config.port = *port;
+    }
+    if (ui_port_text) {
+        auto port = parse_port(*ui_port_text);
+        if (!port) {
+            return UsageError{std::string(ui_port_source) + ": invalid port '" + *ui_port_text +
+                              "' (expected 1 to 65535)"};
+        }
+        config.ui_port = *port;
+    }
+    if (config.ui_port == config.port) {
+        return UsageError{"the UI port (" + std::string(ui_port_source) + ") must differ from the S3 port (" +
+                          std::string(port_source) + "), both are " + std::to_string(config.port)};
     }
     return config;
 }

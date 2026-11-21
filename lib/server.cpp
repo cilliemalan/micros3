@@ -6,6 +6,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace micros3 {
@@ -102,11 +103,9 @@ void send(Res *res, const http::Response &response, const std::shared_ptr<Pendin
     });
 }
 
-} // namespace
-
-bool Server::run(std::uint16_t port, const std::function<void(int)> &on_listen) {
-    uWS::App app;
-    app.any("/*", [this](auto *res, auto *req) {
+// Routes every request on `app` to `service`.
+void serve(uWS::App &app, http::Service &service) {
+    app.any("/*", [&service](auto *res, auto *req) {
         http::Request request;
         std::string method(req->getCaseSensitiveMethod());
         for (char &c : method) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -123,7 +122,7 @@ bool Server::run(std::uint16_t port, const std::function<void(int)> &on_listen) 
         pending->path = request.path;
         pending->request_id = request.request_id;
         try {
-            pending->exchange = service_.begin(request);
+            pending->exchange = service.begin(request);
         } catch (const std::exception &e) {
             std::cerr << "Request " << request.request_id << " failed: " << e.what() << std::endl;
         }
@@ -156,26 +155,56 @@ bool Server::run(std::uint16_t port, const std::function<void(int)> &on_listen) 
             }
         });
     });
+}
 
-    us_listen_socket_t *listen_socket = nullptr;
-    app.listen(port, [&listen_socket](us_listen_socket_t *socket) { listen_socket = socket; });
-    if (listen_socket == nullptr) {
-        on_listen(0);
+} // namespace
+
+Server::Server(std::vector<http::Service *> services) : services_(std::move(services)) {}
+
+bool Server::run(std::uint16_t port, const std::function<void(int)> &on_listen) {
+    return run(std::vector<std::uint16_t>{port}, [&on_listen](const std::vector<int> &bound) { on_listen(bound[0]); });
+}
+
+bool Server::run(const std::vector<std::uint16_t> &ports, const std::function<void(const std::vector<int> &)> &on_listen) {
+    if (ports.size() != services_.size()) {
+        throw std::invalid_argument("Server::run: one port is needed for each service");
+    }
+    // One app per listener. They all share this thread's event loop, so every
+    // service is called from this thread only.
+    std::vector<std::unique_ptr<uWS::App>> apps;
+    std::vector<int> bound(ports.size(), 0);
+    bool all_bound = true;
+    for (std::size_t i = 0; i < ports.size(); ++i) {
+        apps.push_back(std::make_unique<uWS::App>());
+        serve(*apps.back(), *services_[i]);
+        us_listen_socket_t *listen_socket = nullptr;
+        // Exclusive: without it uSockets sets SO_REUSEPORT, and a second
+        // process would share the port instead of failing to bind.
+        apps.back()->listen(ports[i], LIBUS_LISTEN_EXCLUSIVE_PORT,
+                            [&listen_socket](us_listen_socket_t *socket) { listen_socket = socket; });
+        if (listen_socket == nullptr) {
+            all_bound = false;
+        } else {
+            bound[i] = us_socket_local_port(0, reinterpret_cast<us_socket_t *>(listen_socket));
+        }
+    }
+    if (!all_bound) {
+        for (auto &app : apps) app->close();
+        on_listen(bound);
         return false;
     }
-    const int bound = us_socket_local_port(0, reinterpret_cast<us_socket_t *>(listen_socket));
 
     bool closed = false;
-    close_ = [&app, &closed] {
+    close_ = [&apps, &closed] {
         if (!closed) {
             closed = true;
-            app.close();
+            for (auto &app : apps) app->close();
         }
     };
     loop_.store(uWS::Loop::get());
     on_listen(bound);
     if (stop_requested_.load()) close_();
-    app.run();
+    uWS::Loop::get()->run();
     loop_.store(nullptr);
     close_ = nullptr;
     return true;

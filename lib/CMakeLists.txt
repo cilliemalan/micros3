@@ -23,6 +23,7 @@ add_library(libmicros3 STATIC
     staged_body.cpp
     store.cpp
     uploads.cpp
+    ui_api.cpp
     url.cpp
     xml.cpp
 )

@@ -16,11 +16,12 @@ fail() {
     exit 1
 }
 
-# Starts the server on a free port in $data and waits until it answers.
+# Starts the server on a free port (and the UI on the next one) in $data and
+# waits until it answers.
 start() {
     port=$(( 20000 + $(od -An -N2 -tu2 /dev/urandom) % 20000 ))
     MICROS3_ACCESS_KEY_ID=test MICROS3_SECRET_ACCESS_KEY=test \
-        "$bin" --data-dir "$data" --port "$port" >>"$data.log" 2>&1 &
+        "$bin" --data-dir "$data" --port "$port" --ui-port "$((port + 1))" >>"$data.log" 2>&1 &
     pid=$!
     i=0
     until s3 / -o /dev/null 2>/dev/null; do

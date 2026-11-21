@@ -126,3 +126,40 @@ TEST(Config, Help) {
     EXPECT_TRUE(std::holds_alternative<HelpRequested>(run({"-h"})));
     EXPECT_NE(usage("micros3").find("--data-dir"), std::string::npos);
 }
+
+TEST(Config, UiPortDefault) {
+    EXPECT_EQ(ok(run({})).ui_port, 3924);
+    EXPECT_EQ(ok(run({}, {{"MICROS3_UI_PORT", ""}})).ui_port, 3924);
+}
+
+TEST(Config, UiPortFromEnvironmentAndFlags) {
+    EXPECT_EQ(ok(run({}, {{"MICROS3_UI_PORT", "8081"}})).ui_port, 8081);
+    EXPECT_EQ(ok(run({"--ui-port", "9001"}, {{"MICROS3_UI_PORT", "8081"}})).ui_port, 9001);
+    EXPECT_EQ(ok(run({"--ui-port=9002"})).ui_port, 9002);
+    EXPECT_EQ(ok(run({"--ui-port", "9001"}, {{"MICROS3_UI_PORT", "nope"}})).ui_port, 9001);
+}
+
+TEST(Config, InvalidUiPortsRejected) {
+    for (const char *port : {"0", "65536", "-1", "abc", ""}) {
+        SCOPED_TRACE(port);
+        EXPECT_NE(error(run({"--ui-port", port})).find("--ui-port"), std::string::npos);
+    }
+    EXPECT_NE(error(run({}, {{"MICROS3_UI_PORT", "70000"}})).find("MICROS3_UI_PORT"), std::string::npos);
+    EXPECT_NE(error(run({"--ui-port"})), "");
+}
+
+TEST(Config, UiPortMustDifferFromS3Port) {
+    EXPECT_NE(error(run({"--ui-port", "3923"})), "");
+    EXPECT_NE(error(run({"--port", "3924"})), "");
+    EXPECT_NE(error(run({"--port", "5000", "--ui-port", "5000"})), "");
+    EXPECT_NE(error(run({}, {{"MICROS3_PORT", "5000"}, {"MICROS3_UI_PORT", "5000"}})), "");
+    // Moving both apart is fine.
+    Config c = ok(run({"--port", "3924", "--ui-port", "3923"}));
+    EXPECT_EQ(c.port, 3924);
+    EXPECT_EQ(c.ui_port, 3923);
+}
+
+TEST(Config, UsageNamesUiPort) {
+    EXPECT_NE(usage("micros3").find("--ui-port"), std::string::npos);
+    EXPECT_NE(usage("micros3").find("MICROS3_UI_PORT"), std::string::npos);
+}
