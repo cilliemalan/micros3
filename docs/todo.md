@@ -151,8 +151,8 @@ All are recorded in design.md. Nothing here is open.
 ## Cross-cutting
 
 - [ ] Each request completes promptly. Verify's default request timeout is 30 s.
-- [ ] Update the operation checkboxes in `lib/README.md` as each operation lands.
-- [ ] Update the root `README.md` with the build, the run command, the environment variables (including the credentials) and the Docker command.
+- [x] Update the operation checkboxes in `lib/README.md` as each operation lands. (All operations are ticked, and the conditional-write and Range behavior is described.)
+- [x] Update the root `README.md` with the build, the run command, the environment variables (including the credentials) and the Docker command. (Also the static-link option, the data directory layout and the test scripts.)
 - [ ] Consider a single-PUT size limit (EntityTooLarge above 5 GiB). Optional, since no check exercises it.
 
 ## Emulator tests

@@ -1,4 +1,4 @@
-This library is (will be) the backend for micros3: an S3 emulator.
+This library is the backend for micros3: an S3 emulator.
 
 It is meant to implement these operations with basic support:
 
@@ -35,7 +35,7 @@ It is meant to implement these operations with basic support:
   - [x] GetBucketEncryption
 
 ### Supported features
-bucket creation, listing and deletion; object upload, download, copy and deletion; object listing; multipart uploads; bucket CORS; MD5 ETags for single-part objects; `Content-MD5` and CRC32/SHA-256 checksum validation on upload.
+bucket creation, listing and deletion; object upload, download, copy and deletion; object listing; multipart uploads; bucket CORS; single-range GET and HEAD; MD5 ETags for single-part objects; `Content-MD5` and CRC32/SHA-256 checksum validation on upload.
 
 ### Conditional requests
 GetObject and HeadObject support `If-Match`, `If-None-Match`, `If-Modified-Since`
@@ -46,9 +46,10 @@ as S3 documents: a date condition is ignored when the corresponding ETag
 condition is present. Dates are compared with the one-second `Last-Modified`
 value. A failed read condition returns 304 (`If-None-Match`/`If-Modified-Since`)
 or 412 (`If-Match`/`If-Unmodified-Since`); a failed copy condition returns 412
-`PreconditionFailed`. HEAD and 304 responses carry no body. Handling of future
-or unparseable dates, and conditional writes (`If-None-Match` on PutObject or
-CompleteMultipartUpload), are not defined.
+`PreconditionFailed`. HEAD and 304 responses carry no body. Future and
+unparseable dates are ignored. Conditional writes (`If-Match` or
+`If-None-Match` on PutObject, CopyObject or CompleteMultipartUpload) return 501
+`NotImplemented`.
 
 ### CORS
 A bucket's CORS rules are evaluated in order, and the first rule that matches
