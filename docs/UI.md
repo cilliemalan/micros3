@@ -235,6 +235,14 @@ The scaffold in `ui/` pins React 19.3.1, `@ui-sdk/react` and `@ui-sdk/core` 0.1.
 
 The built JS contains URL strings that are not fetched: XML namespace URIs (`http://www.w3.org/...`) in React DOM, and React's `https://react.dev/errors/` message text. The check in U21 for external URLs must allow those, and fail on anything the page would load.
 
+### Build results (U12)
+
+The pipeline is in `cmake/ui.cmake`, included from the root `CMakeLists.txt`, and `cmake/embed_ui.cmake`. The output goes to `<build>/ui/` (`dist/`, `build.stamp` and `ui_assets.cpp`). Checked by hand: a clean clone configures and builds the UI with the binary; a build with no UI edit runs only `pnpm install`; editing a file in `ui/src` runs Vite and the embed step, and the library is recompiled only when the built bytes change (an edit that minifies away, such as a comment, recompiles nothing); deleting `ui/node_modules` is repaired by the next build (it also re-runs CMake once, since the top level of `ui/` is globbed with its directories); touching or changing the lockfile reinstalls and rebuilds; and with `node` or `pnpm` missing from `PATH` configuration stops with the message above.
+
+The static `micros3` binary grew from 6,081,344 bytes (before the UI) to 6,524,672 bytes with the scaffold page embedded (about 436 KB of assets). The generated `ui_assets.cpp` is about 2.2 MB of source.
+
+The UI service serves `/` as `index.html` with `Cache-Control: no-cache`, the hashed files under `/assets/` with `Cache-Control: public, max-age=31536000, immutable`, and any other embedded file at its own path with `no-cache`. Other paths, including S3-style ones, are a JSON 404 `NotFound`, and a method other than GET or HEAD on a file is 405.
+
 ### Development loop
 
 `pnpm dev` in `ui/` starts the Vite dev server. It proxies `/api` to a running `micros3 --ui-port 3924`. The S3 side is separate, and verify still runs against the S3 port.
@@ -255,4 +263,4 @@ The built JS contains URL strings that are not fetched: XML namespace URIs (`htt
 
 ## Status
 
-The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3), the shared operation code is extracted (U4), the frontend scaffold in `ui/` is built and checked by the spike (U5), the typed API client is in `ui/src/api.ts` (U6), and the request guards run on every UI request, in `ui::guard` in `lib/ui_api.cpp` (U7). The bucket routes of the JSON API are in `UiService` (U8): health, list, create, details, delete, empty, and CORS get, set and remove. The steps are in [todo.md](todo.md), under "Web UI".
+The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3), the shared operation code is extracted (U4), the frontend scaffold in `ui/` is built and checked by the spike (U5), the typed API client is in `ui/src/api.ts` (U6), and the request guards run on every UI request, in `ui::guard` in `lib/ui_api.cpp` (U7). The bucket routes of the JSON API are in `UiService` (U8): health, list, create, details, delete, empty, and CORS get, set and remove. The object, upload and content routes are in place (U9, U10). Outside `/api/` the service serves the embedded files (U11), and `cmake/ui.cmake` with `cmake/embed_ui.cmake` builds and embeds them in every CMake build (U12). The steps are in [todo.md](todo.md), under "Web UI".

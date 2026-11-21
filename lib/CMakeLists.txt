@@ -26,7 +26,9 @@ add_library(libmicros3 STATIC
     ui_api.cpp
     url.cpp
     xml.cpp
+    "${MICROS3_UI_ASSETS_CPP}"
 )
+add_dependencies(libmicros3 ui_assets)
 set_target_properties(libmicros3 PROPERTIES OUTPUT_NAME micros3)
 target_include_directories(libmicros3 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(libmicros3

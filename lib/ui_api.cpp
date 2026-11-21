@@ -121,6 +121,48 @@ std::optional<http::Response> guard(const http::Request &request, std::uint16_t 
     return std::nullopt;
 }
 
+void add_security_headers(http::Response &response) {
+    response.set_header("Content-Security-Policy",
+                        "default-src 'self'; img-src 'self' blob: data:; connect-src 'self'; style-src 'self'; "
+                        "object-src 'none'; frame-ancestors 'none'");
+    response.set_header("X-Content-Type-Options", "nosniff");
+    response.set_header("Referrer-Policy", "no-referrer");
+}
+
+http::Response serve_static(const Assets &assets, const http::Request &request) {
+    const std::string_view path = request.path == "/" ? std::string_view("/index.html") : request.path;
+    const Asset *asset = assets.find(path);
+    if (!asset) return json_error(404, "NotFound", "Not found.");
+    if (request.method != "GET" && request.method != "HEAD") {
+        return json_error(405, "MethodNotAllowed", "The specified method is not allowed against this resource.");
+    }
+    http::Response response;
+    response.set_header("Content-Type", std::string(asset->content_type));
+    // Vite names the files under /assets/ by a hash of their content, so a
+    // changed file has a new name. Everything else, index.html above all, must
+    // be checked each time so a new build is picked up.
+    constexpr std::string_view kHashed = "/assets/";
+    if (path.substr(0, kHashed.size()) == kHashed) {
+        response.set_header("Cache-Control", "public, max-age=31536000, immutable");
+    } else {
+        response.set_header("Cache-Control", "no-cache");
+    }
+    add_security_headers(response);
+    if (request.method == "HEAD") {
+        response.reported_length = asset->size;
+    } else {
+        response.body = std::string(asset->bytes());
+    }
+    return response;
+}
+
+const Asset *Assets::find(std::string_view path) const {
+    for (const Asset &asset : *this) {
+        if (asset.path == path) return &asset;
+    }
+    return nullptr;
+}
+
 } // namespace ui
 
 namespace {
@@ -716,7 +758,7 @@ std::unique_ptr<http::Exchange> UiService::begin(const http::Request &request) {
 
     constexpr std::string_view kApi = "/api/";
     const std::string_view path = request.path;
-    if (path.substr(0, kApi.size()) != kApi) return fixed(ui::json_error(404, "NotFound", "Not found."));
+    if (path.substr(0, kApi.size()) != kApi) return fixed(ui::serve_static(assets_, request));
     const auto segments = api_segments(path.substr(kApi.size()));
     if (!segments) return fixed(error(invalid_uri()));
 

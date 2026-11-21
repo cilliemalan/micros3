@@ -12,6 +12,7 @@ add_executable(testmicros3
     sigv4_test.cpp
     store_test.cpp
     ui_api_test.cpp
+    ui_assets_test.cpp
     ui_test.cpp
     uploads_test.cpp
     xml_test.cpp

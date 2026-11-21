@@ -1,4 +1,4 @@
-// Tests for the web UI port: the request guards (UI6).
+// Tests for the web UI port: the request guards (UI6) and static serving (U11).
 
 #include "micros3/store.h"
 #include "micros3/ui_api.h"
@@ -9,6 +9,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
+#include <iterator>
 #include <optional>
 #include <string>
 
@@ -155,6 +158,130 @@ TEST(UiService, GuardsRunBeforeRouting) {
     service.set_port(4000);
     EXPECT_EQ(service.begin(make_request("GET", "localhost:3924"))->on_end().status, 403);
     EXPECT_EQ(service.begin(make_request("GET", "localhost:4000"))->on_end().status, 200);
+}
+
+// The value of the response header `name` (any case), or "".
+std::string header(const Response &response, std::string_view name) {
+    for (const auto &[key, value] : response.headers) {
+        if (key.size() == name.size() &&
+            std::equal(key.begin(), key.end(), name.begin(), [](char a, char b) {
+                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
+            })) {
+            return value;
+        }
+    }
+    return "";
+}
+
+// A small asset table standing in for the embedded UI build.
+const unsigned char kIndex[] = {'<', 'h', '1', '>', 'h', 'i', '<', '/', 'h', '1', '>'};
+const unsigned char kScript[] = {'1', ';'};
+const unsigned char kStyle[] = {'a', '{', '}'};
+const micros3::ui::Asset kTestAssets[] = {
+    {"/assets/index-abc.css", "text/css; charset=utf-8", kStyle, sizeof(kStyle)},
+    {"/assets/index-abc.js", "text/javascript; charset=utf-8", kScript, sizeof(kScript)},
+    {"/favicon.ico", "image/x-icon", nullptr, 0},
+    {"/index.html", "text/html; charset=utf-8", kIndex, sizeof(kIndex)},
+};
+
+class UiStatic : public ::testing::Test {
+protected:
+    Response get(std::string method, std::string path, std::string query = "") {
+        Request request = make_request(std::move(method), "localhost:3924");
+        request.path = std::move(path);
+        request.query = std::move(query);
+        return service.begin(request)->on_end();
+    }
+
+    void expect_not_found(const Response &response) {
+        EXPECT_EQ(response.status, 404);
+        const auto body = nlohmann::json::parse(response.body);
+        EXPECT_EQ(body["error"]["code"], "NotFound");
+        EXPECT_NE(header(response, "content-type").find("application/json"), std::string::npos);
+    }
+
+    micros3::test::TempDir dir;
+    micros3::Store store{dir.path()};
+    micros3::UiService service{store, kPort, micros3::ui::Assets{kTestAssets, std::size(kTestAssets)}};
+};
+
+TEST_F(UiStatic, RootServesIndexHtml) {
+    const Response response = get("GET", "/");
+    EXPECT_EQ(response.status, 200);
+    EXPECT_EQ(response.body, "<h1>hi</h1>");
+    EXPECT_EQ(header(response, "content-type"), "text/html; charset=utf-8");
+    EXPECT_EQ(header(response, "cache-control"), "no-cache");
+    EXPECT_EQ(header(response, "x-content-type-options"), "nosniff");
+    EXPECT_EQ(header(response, "referrer-policy"), "no-referrer");
+    EXPECT_NE(header(response, "content-security-policy").find("default-src 'self'"), std::string::npos);
+
+    // index.html is also served at its own name, and a query does not matter.
+    EXPECT_EQ(get("GET", "/index.html").body, "<h1>hi</h1>");
+    EXPECT_EQ(get("GET", "/", "x=1").body, "<h1>hi</h1>");
+}
+
+TEST_F(UiStatic, AssetsHaveTheirContentTypes) {
+    const Response script = get("GET", "/assets/index-abc.js");
+    EXPECT_EQ(script.status, 200);
+    EXPECT_EQ(script.body, "1;");
+    EXPECT_EQ(header(script, "content-type"), "text/javascript; charset=utf-8");
+    EXPECT_EQ(header(script, "cache-control"), "public, max-age=31536000, immutable");
+
+    const Response style = get("GET", "/assets/index-abc.css");
+    EXPECT_EQ(style.body, "a{}");
+    EXPECT_EQ(header(style, "content-type"), "text/css; charset=utf-8");
+
+    const Response icon = get("GET", "/favicon.ico");
+    EXPECT_EQ(icon.status, 200);
+    EXPECT_EQ(icon.body, "");
+    EXPECT_EQ(header(icon, "cache-control"), "no-cache");
+}
+
+TEST_F(UiStatic, HeadHasNoBody) {
+    const Response response = get("HEAD", "/");
+    EXPECT_EQ(response.status, 200);
+    EXPECT_EQ(response.body, "");
+    ASSERT_TRUE(response.reported_length.has_value());
+    EXPECT_EQ(*response.reported_length, sizeof(kIndex));
+    EXPECT_EQ(header(response, "content-type"), "text/html; charset=utf-8");
+    EXPECT_EQ(get("HEAD", "/assets/index-abc.js").reported_length, 2u);
+}
+
+TEST_F(UiStatic, UnknownPathsAreNotFound) {
+    expect_not_found(get("GET", "/nope"));
+    expect_not_found(get("GET", "/assets/"));
+    expect_not_found(get("GET", "/assets/missing.js"));
+    expect_not_found(get("GET", "/assets"));
+    expect_not_found(get("GET", "//index.html"));
+    expect_not_found(get("GET", "/index.html/"));
+    expect_not_found(get("GET", "/assets/../index.html"));
+    expect_not_found(get("GET", "/api"));
+}
+
+TEST_F(UiStatic, S3RequestsAreNotFound) {
+    expect_not_found(get("GET", "/photos", "list-type=2"));
+    expect_not_found(get("GET", "/photos/2026/a.jpg"));
+    expect_not_found(get("PUT", "/photos"));
+    expect_not_found(get("PUT", "/photos/a.jpg"));
+    expect_not_found(get("DELETE", "/photos/a.jpg"));
+    expect_not_found(get("POST", "/photos", "delete"));
+    expect_not_found(get("HEAD", "/photos"));
+}
+
+TEST_F(UiStatic, OnlyGetAndHeadOnFiles) {
+    for (const char *method : {"POST", "PUT", "DELETE", "PATCH", "OPTIONS"}) {
+        for (const char *path : {"/", "/index.html", "/assets/index-abc.js"}) {
+            const Response response = get(method, path);
+            EXPECT_EQ(response.status, 405) << method << " " << path;
+            EXPECT_EQ(nlohmann::json::parse(response.body)["error"]["code"], "MethodNotAllowed");
+        }
+    }
+}
+
+TEST_F(UiStatic, GuardsRunBeforeStaticFiles) {
+    Request request = make_request("GET", "attacker.example:3924");
+    request.path = "/";
+    EXPECT_EQ(service.begin(request)->on_end().status, 403);
 }
 
 } // namespace

@@ -31,8 +31,17 @@
 // Object keys are passed in the `key` query parameter, never in the path.
 // Path segments are percent-decoded. A known path with another method is 405
 // MethodNotAllowed; HEAD is allowed wherever GET is. Other paths are 404.
+//
+// Outside /api/, the service serves the embedded UI files (U11): `/` is
+// index.html, and every other embedded file is served at its own path, such
+// as /assets/index-3f2a.js. Only GET and HEAD are allowed on them (405
+// otherwise), and any other path, including every S3-style path such as
+// /bucket/key, is a JSON 404, never an S3 error. index.html is sent with
+// Cache-Control: no-cache; the hashed files under /assets/ may be cached for
+// good.
 
 #include "micros3/http.h"
+#include "micros3/ui_assets.h"
 
 #include <atomic>
 #include <cstdint>
@@ -66,12 +75,24 @@ bool host_allowed(std::string_view host, std::uint16_t port);
 // authentication.
 std::optional<http::Response> guard(const http::Request &request, std::uint16_t port);
 
+// Adds the headers every UI page response carries (docs/UI.md, "Security of
+// the frontend"): the Content-Security-Policy, X-Content-Type-Options:
+// nosniff and Referrer-Policy: no-referrer.
+void add_security_headers(http::Response &response);
+
+// The response for a request outside /api/: the embedded file at the path,
+// or 404 NotFound, or 405 MethodNotAllowed for a method other than GET and
+// HEAD on a file. A HEAD response has no body and reports the file's length.
+http::Response serve_static(const Assets &assets, const http::Request &request);
+
 } // namespace ui
 
 class UiService : public http::Service {
 public:
     // `port` is the UI port, which the Host header must name if it has a port.
-    UiService(Store &store, std::uint16_t port) : store_(store), port_(port) {}
+    // `assets` are the files served outside /api/ (tests pass their own).
+    UiService(Store &store, std::uint16_t port, ui::Assets assets = ui::embedded_assets())
+        : store_(store), port_(port), assets_(assets) {}
     std::unique_ptr<http::Exchange> begin(const http::Request &request) override;
 
     // Sets the UI port, for a listener bound to port 0 (tests).
@@ -80,6 +101,7 @@ public:
 private:
     Store &store_;
     std::atomic<std::uint16_t> port_;
+    ui::Assets assets_;
 };
 
 } // namespace micros3
