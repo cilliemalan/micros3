@@ -3,8 +3,8 @@
 import { Button } from "@ui-sdk/react/button"
 import { bucketRoute, routeHash } from "../route"
 import type { BucketsState } from "../useBuckets"
-import { isApiError } from "../api"
-import { PlusIcon, RefreshIcon, TrashIcon } from "./Icons"
+import { BucketIcon, PlusIcon, RefreshIcon, TrashIcon } from "./Icons"
+import { EmptyState, ErrorState, Loading } from "./States"
 import { Time } from "./Time"
 
 export function BucketsPage({
@@ -33,57 +33,56 @@ export function BucketsPage({
       </div>
       {buckets === null ? (
         error ? (
-          <div className="empty" role="alert">
-            <p>Could not load buckets.</p>
-            <p className="muted">{isApiError(error) ? `${error.message} (${error.code})` : String(error)}</p>
+          <ErrorState title="Could not load buckets." error={error}>
             <Button onClick={() => void state.reload()}>Try again</Button>
-          </div>
+          </ErrorState>
         ) : (
-          <p className="muted">Loading…</p>
+          <Loading />
         )
       ) : buckets.length === 0 ? (
-        <div className="empty">
-          <p>There are no buckets yet.</p>
+        <EmptyState icon={<BucketIcon />} title="There are no buckets yet.">
           <Button data-variant="solid" onClick={onNewBucket}>
             <PlusIcon /> Create a bucket
           </Button>
-        </div>
+        </EmptyState>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th scope="col">Name</th>
-              <th scope="col">Region</th>
-              <th scope="col">Created</th>
-              <th scope="col">
-                <span className="sr-only">Actions</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {buckets.map((bucket) => (
-              <tr key={bucket.name}>
-                <td className="mono">
-                  <a href={routeHash(bucketRoute(bucket.name))}>{bucket.name}</a>
-                </td>
-                <td className="mono">{bucket.region}</td>
-                <td>
-                  <Time iso={bucket.created} />
-                </td>
-                <td className="actions">
-                  <Button
-                    className="icon-button"
-                    aria-label={`Delete ${bucket.name}`}
-                    title="Delete"
-                    onClick={() => onDelete(bucket.name)}
-                  >
-                    <TrashIcon />
-                  </Button>
-                </td>
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Region</th>
+                <th scope="col">Created</th>
+                <th scope="col">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {buckets.map((bucket) => (
+                <tr key={bucket.name}>
+                  <td className="mono">
+                    <a href={routeHash(bucketRoute(bucket.name))}>{bucket.name}</a>
+                  </td>
+                  <td className="mono">{bucket.region}</td>
+                  <td>
+                    <Time iso={bucket.created} />
+                  </td>
+                  <td className="actions">
+                    <Button
+                      className="icon-button"
+                      aria-label={`Delete ${bucket.name}`}
+                      title="Delete"
+                      onClick={() => onDelete(bucket.name)}
+                    >
+                      <TrashIcon />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   )

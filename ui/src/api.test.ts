@@ -5,6 +5,7 @@ import {
   api,
   apiUrl,
   bucketUrl,
+  errorDetail,
   isApiError,
   objectUrl,
   parseError,
@@ -345,5 +346,23 @@ describe("uploadObject", () => {
       uploadObject("b", "k", new Blob(["x"]), { signal: controller.signal }),
     ).rejects.toMatchObject({ name: "AbortError" })
     expect(FakeXhr.last).toBeUndefined()
+  })
+})
+
+describe("errorDetail", () => {
+  it("shows an API error's message and code", () => {
+    expect(errorDetail(new ApiError(404, "NoSuchBucket", "The bucket does not exist."))).toBe(
+      "The bucket does not exist. (NoSuchBucket)",
+    )
+  })
+
+  it("shows another error's message, or its name if it has none", () => {
+    expect(errorDetail(new TypeError("boom"))).toBe("boom")
+    expect(errorDetail(new RangeError())).toBe("RangeError")
+  })
+
+  it("turns anything else into a string", () => {
+    expect(errorDetail("plain")).toBe("plain")
+    expect(errorDetail(42)).toBe("42")
   })
 })

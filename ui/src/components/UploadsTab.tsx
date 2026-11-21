@@ -11,7 +11,8 @@ import {
   AlertDialogTitle,
 } from "@ui-sdk/react/alert-dialog"
 import { api, isApiError, type Upload, type UploadListing } from "../api"
-import { RefreshIcon, XIcon } from "./Icons"
+import { RefreshIcon, UploadIcon, XIcon } from "./Icons"
+import { EmptyState, ErrorState, Loading } from "./States"
 import { Time } from "./Time"
 import { notify, notifyError } from "./Toasts"
 
@@ -90,50 +91,51 @@ export function UploadsTab({ bucket }: { bucket: string }) {
         </Button>
       </div>
       {error ? (
-        <div className="empty" role="alert">
-          <p>Could not load the uploads.</p>
-          <p className="muted">{isApiError(error) ? `${error.message} (${error.code})` : String(error)}</p>
+        <ErrorState title="Could not load the uploads." error={error}>
           <Button onClick={() => setReloads((n) => n + 1)}>Try again</Button>
-        </div>
+        </ErrorState>
       ) : firstLoad ? (
-        <p className="muted">Loading…</p>
+        <Loading />
       ) : uploads.length === 0 ? (
-        <div className="empty">
-          <p>No multipart uploads are in progress.</p>
-          <p className="muted small">Uploads started through the S3 API appear here until they are completed or aborted.</p>
-        </div>
+        <EmptyState
+          icon={<UploadIcon />}
+          title="No multipart uploads are in progress."
+          hint="Uploads started through the S3 API appear here until they are completed or aborted."
+        />
       ) : (
         <>
-          <table className="table">
-            <thead>
-              <tr>
-                <th scope="col">Key</th>
-                <th scope="col">Upload ID</th>
-                <th scope="col">Started</th>
-                <th scope="col">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {uploads.map((upload) => (
-                <tr key={`${upload.key}\u0000${upload.uploadId}`}>
-                  <td className="mono key-cell">{upload.key}</td>
-                  <td className="mono truncate" title={upload.uploadId}>
-                    {upload.uploadId}
-                  </td>
-                  <td>
-                    <Time iso={upload.initiated} />
-                  </td>
-                  <td className="actions">
-                    <Button onClick={() => setAborting(upload)}>
-                      <XIcon /> Abort<span className="sr-only"> upload of {upload.key}</span>
-                    </Button>
-                  </td>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">Key</th>
+                  <th scope="col">Upload ID</th>
+                  <th scope="col">Started</th>
+                  <th scope="col">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {uploads.map((upload) => (
+                  <tr key={`${upload.key}\u0000${upload.uploadId}`}>
+                    <td className="mono key-cell">{upload.key}</td>
+                    <td className="mono truncate" title={upload.uploadId}>
+                      {upload.uploadId}
+                    </td>
+                    <td>
+                      <Time iso={upload.initiated} />
+                    </td>
+                    <td className="actions">
+                      <Button onClick={() => setAborting(upload)}>
+                        <XIcon /> Abort<span className="sr-only"> upload of {upload.key}</span>
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {next && (
             <div className="row center">
               <Button onClick={() => void loadMore()} disabled={loading}>

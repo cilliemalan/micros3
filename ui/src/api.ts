@@ -23,6 +23,13 @@ export function isApiError(error: unknown, code?: string): error is ApiError {
   return error instanceof ApiError && (code === undefined || error.code === code)
 }
 
+/** A one-line description of any error, for the detail line of an error state or toast. */
+export function errorDetail(error: unknown): string {
+  if (isApiError(error)) return `${error.message} (${error.code})`
+  if (error instanceof Error) return error.message || error.name
+  return String(error)
+}
+
 // ---------------------------------------------------------------------------
 // URL helpers
 

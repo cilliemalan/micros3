@@ -35,6 +35,7 @@ import {
   type CorsRuleForm,
 } from "../cors"
 import { CheckIcon, PlusIcon, TrashIcon } from "./Icons"
+import { EmptyState, ErrorState, Loading } from "./States"
 import { Time } from "./Time"
 import { notify, notifyError } from "./Toasts"
 
@@ -44,10 +45,6 @@ type CorsState =
   | { status: "loading" }
   | { status: "error"; error: unknown }
   | { status: "ready"; stored: boolean }
-
-function describe(error: unknown): string {
-  return isApiError(error) ? `${error.message} (${error.code})` : String(error)
-}
 
 export function SettingsTab({ details }: { details: BucketDetails }) {
   const bucket = details.name
@@ -156,19 +153,18 @@ export function SettingsTab({ details }: { details: BucketDetails }) {
           by the first rule that matches its origin, method and headers.
         </p>
         {cors.status === "loading" ? (
-          <p className="muted">Loading…</p>
+          <Loading />
         ) : cors.status === "error" ? (
-          <div className="empty" role="alert">
-            <p>Could not load the CORS configuration.</p>
-            <p className="muted">{describe(cors.error)}</p>
+          <ErrorState title="Could not load the CORS configuration." error={cors.error}>
             <Button onClick={() => setReloads((n) => n + 1)}>Try again</Button>
-          </div>
+          </ErrorState>
         ) : (
           <form onSubmit={save} noValidate className="stack">
             {rules.length === 0 ? (
-              <div className="empty">
-                <p>{stored ? "Every rule is removed. Save needs at least one rule; use Remove CORS instead." : "No CORS configuration is set."}</p>
-              </div>
+              <EmptyState
+                title={stored ? "Every rule is removed." : "No CORS configuration is set."}
+                hint={stored ? "Save needs at least one rule; use Remove CORS instead." : undefined}
+              />
             ) : (
               rules.map((rule, index) => (
                 <RuleEditor

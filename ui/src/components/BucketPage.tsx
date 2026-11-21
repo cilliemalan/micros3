@@ -7,6 +7,7 @@ import { Tabs, TabsList, TabsPanel, TabsTab } from "@ui-sdk/react/tabs"
 import { api, isApiError, type BucketDetails } from "../api"
 import { TABS, bucketRoute, navigate, type Tab } from "../route"
 import { TrashIcon } from "./Icons"
+import { ErrorState, Loading } from "./States"
 import { ObjectsTab } from "./ObjectsTab"
 import { SettingsTab } from "./SettingsTab"
 import { TopBar } from "./TopBar"
@@ -49,17 +50,20 @@ export function BucketPage({
 
   let body: ReactNode
   if (!current) {
-    body = <p className="muted page">Loading…</p>
+    body = (
+      <div className="page">
+        <Loading />
+      </div>
+    )
   } else if (current.error) {
     body = (
-      <div className="empty page" role="alert">
-        <p>{missing ? `The bucket "${bucket}" does not exist.` : "Could not load this bucket."}</p>
-        {!missing && isApiError(current.error) && (
-          <p className="muted">
-            {current.error.message} ({current.error.code})
-          </p>
-        )}
-        <a href="#/">Back to buckets</a>
+      <div className="page">
+        <ErrorState
+          title={missing ? `The bucket "${bucket}" does not exist.` : "Could not load this bucket."}
+          error={missing ? undefined : current.error}
+        >
+          <a href="#/">Back to buckets</a>
+        </ErrorState>
       </div>
     )
   }

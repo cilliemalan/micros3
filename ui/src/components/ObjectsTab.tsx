@@ -37,6 +37,7 @@ import {
 } from "../objects"
 import { bucketRoute, routeHash } from "../route"
 import { Breadcrumb } from "./Breadcrumb"
+import { EmptyState, ErrorState, Loading } from "./States"
 import { CopyObjectDialog } from "./CopyObjectDialog"
 import { DeleteObjectsDialog } from "./DeleteObjectsDialog"
 import {
@@ -148,10 +149,9 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
 
   if (missing) {
     return (
-      <div className="empty" role="alert">
-        <p>The bucket "{bucket}" no longer exists.</p>
+      <ErrorState title={`The bucket "${bucket}" no longer exists.`}>
         <a href="#/">Back to buckets</a>
-      </div>
+      </ErrorState>
     )
   }
 
@@ -198,18 +198,15 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
         </Button>
       </div>
       {error ? (
-        <div className="empty" role="alert">
-          <p>Could not list the objects.</p>
-          <p className="muted">{isApiError(error) ? `${error.message} (${error.code})` : String(error)}</p>
+        <ErrorState title="Could not list the objects." error={error}>
           <Button onClick={reload}>Try again</Button>
-        </div>
+        </ErrorState>
       ) : firstLoad ? (
-        <p className="muted">Loading…</p>
+        <Loading />
       ) : folders.length === 0 && objects.length === 0 ? (
-        <div className="empty">
-          <p>{emptyText(prefix, filter)}</p>
+        <EmptyState icon={<FolderIcon />} title={emptyText(prefix, filter)}>
           {filter && <Button onClick={() => setFilterText("")}>Clear filter</Button>}
-        </div>
+        </EmptyState>
       ) : (
         <>
           <CheckboxGroup
@@ -218,89 +215,91 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
             allValues={objects.map((o) => o.key)}
             aria-label="Selected objects"
           >
-            <table className="table objects-table">
-              <thead>
-                <tr>
-                  <th scope="col" className="select">
-                    {objects.length > 0 && (
-                      <Checkbox parent aria-label="Select all objects shown">
-                        {/* No icon of ours: web.css draws the check, or the dash when some are selected. */}
-                        <CheckboxIndicator />
-                      </Checkbox>
-                    )}
-                  </th>
-                  <th scope="col">Name</th>
-                  <th scope="col" className="num">
-                    Size
-                  </th>
-                  <th scope="col">Last modified</th>
-                  <th scope="col">ETag</th>
-                  <th scope="col" className="actions">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {folders.map((folder) => (
-                  <tr key={`f:${folder}`} className="folder-row">
-                    <td className="select" />
-                    <td className="mono key-cell">
-                      <a href={routeHash(bucketRoute(bucket, "objects", folder))} className="entry">
-                        <FolderIcon />
-                        <span>{entryName(folder, prefix)}</span>
-                      </a>
-                    </td>
-                    <td className="num muted">—</td>
-                    <td className="muted">—</td>
-                    <td className="muted">—</td>
-                    <td className="actions" />
-                  </tr>
-                ))}
-                {objects.map((object) => {
-                  const name = entryName(object.key, prefix)
-                  return (
-                    <tr key={`o:${object.key}`}>
-                      <td className="select">
-                        <Checkbox value={object.key} aria-label={`Select ${name}`}>
+            <div className="table-wrap">
+              <table className="table objects-table">
+                <thead>
+                  <tr>
+                    <th scope="col" className="select">
+                      {objects.length > 0 && (
+                        <Checkbox parent aria-label="Select all objects shown">
+                          {/* No icon of ours: web.css draws the check, or the dash when some are selected. */}
                           <CheckboxIndicator />
                         </Checkbox>
-                      </td>
+                      )}
+                    </th>
+                    <th scope="col">Name</th>
+                    <th scope="col" className="num">
+                      Size
+                    </th>
+                    <th scope="col">Last modified</th>
+                    <th scope="col">ETag</th>
+                    <th scope="col" className="actions">
+                      <span className="sr-only">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {folders.map((folder) => (
+                    <tr key={`f:${folder}`} className="folder-row">
+                      <td className="select" />
                       <td className="mono key-cell">
-                        <button
-                          type="button"
-                          className="entry entry-button"
-                          title={object.key}
-                          onClick={() => setDetails(object.key)}
-                        >
-                          <FileIcon />
-                          <span>{name}</span>
-                        </button>
+                        <a href={routeHash(bucketRoute(bucket, "objects", folder))} className="entry">
+                          <FolderIcon />
+                          <span>{entryName(folder, prefix)}</span>
+                        </a>
                       </td>
-                      <td className="num" title={`${object.size.toLocaleString()} bytes`}>
-                        {formatSize(object.size)}
-                      </td>
-                      <td className="nowrap">
-                        <Time iso={object.lastModified} />
-                      </td>
-                      <td className="mono truncate etag" title={displayEtag(object.etag)}>
-                        {displayEtag(object.etag)}
-                      </td>
-                      <td className="actions">
-                        <MenuTrigger
-                          controller={rowMenu}
-                          payload={object}
-                          aria-label={`Actions for ${name}`}
-                          data-variant="ghost"
-                          data-size="sm"
-                        >
-                          <MoreIcon />
-                        </MenuTrigger>
-                      </td>
+                      <td className="num muted">—</td>
+                      <td className="muted">—</td>
+                      <td className="muted">—</td>
+                      <td className="actions" />
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+                  ))}
+                  {objects.map((object) => {
+                    const name = entryName(object.key, prefix)
+                    return (
+                      <tr key={`o:${object.key}`}>
+                        <td className="select">
+                          <Checkbox value={object.key} aria-label={`Select ${name}`}>
+                            <CheckboxIndicator />
+                          </Checkbox>
+                        </td>
+                        <td className="mono key-cell">
+                          <button
+                            type="button"
+                            className="entry entry-button"
+                            title={object.key}
+                            onClick={() => setDetails(object.key)}
+                          >
+                            <FileIcon />
+                            <span>{name}</span>
+                          </button>
+                        </td>
+                        <td className="num" title={`${object.size.toLocaleString()} bytes`}>
+                          {formatSize(object.size)}
+                        </td>
+                        <td className="nowrap">
+                          <Time iso={object.lastModified} />
+                        </td>
+                        <td className="mono truncate etag" title={displayEtag(object.etag)}>
+                          {displayEtag(object.etag)}
+                        </td>
+                        <td className="actions">
+                          <MenuTrigger
+                            controller={rowMenu}
+                            payload={object}
+                            aria-label={`Actions for ${name}`}
+                            data-variant="ghost"
+                            data-size="sm"
+                          >
+                            <MoreIcon />
+                          </MenuTrigger>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
           </CheckboxGroup>
           {next && (
             <div className="row center">

@@ -9,17 +9,63 @@
 }
 
 :root {
-  --sidebar-width: 15rem;
+  /*
+   * Design tokens (docs/UI.md, "Styling"). They sit on top of web.css: the
+   * neutral colors are web.css's, which already switch with color-scheme
+   * through light-dark(); the accent, success and soft fills are ours, and
+   * follow the same scheme. Components use these names, not --ui-* or raw
+   * values, so one change here restyles the app.
+   */
+
+  /* Colors */
+  --color-bg: var(--ui-background);
+  --color-fg: var(--ui-foreground);
+  --color-surface: var(--ui-muted);
+  --color-muted-fg: var(--ui-muted-foreground);
+  --color-border: var(--ui-border);
+  --color-border-strong: var(--ui-input);
+  --color-hover: color-mix(in oklch, var(--ui-muted) 60%, transparent);
+  --color-selected: var(--ui-border);
+  --color-accent: light-dark(oklch(0.55 0.17 255), oklch(0.72 0.14 255));
+  --color-accent-soft: light-dark(oklch(0.96 0.025 255), oklch(0.27 0.05 255));
+  --color-danger: var(--ui-destructive);
+  --color-danger-soft: light-dark(oklch(0.975 0.015 25), oklch(0.21 0.035 25));
+  --color-danger-border: light-dark(oklch(0.87 0.06 25), oklch(0.36 0.08 25));
+  --color-success: light-dark(oklch(0.52 0.14 150), oklch(0.75 0.15 150));
+  --color-overlay: var(--ui-overlay);
+  --shadow: var(--ui-shadow);
+
+  /* Spacing, on a 4 px step */
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
+  --space-5: 1.25rem;
   --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  /* Radii. web.css is square by default; --ui-radius rounds its components to match. */
+  --radius-sm: 0.25rem;
   --radius: 0.375rem;
+  --radius-lg: 0.5rem;
   --ui-radius: var(--radius);
+
+  /* Type */
+  --font-sans: var(--ui-font-sans);
+  --font-mono: var(--ui-font-mono);
+  --text-xs: 0.75rem;
+  --text-sm: var(--ui-font-size);
+  --text-md: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.125rem;
+  --leading: var(--ui-line-height);
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* Layout */
+  --sidebar-width: 15rem;
+  --control-height: 2rem;
   --focus-ring: 2px solid var(--ui-ring-border);
-  --sidebar-bg: var(--ui-muted);
-  --row-hover: color-mix(in oklch, var(--ui-muted) 60%, transparent);
 }
 
 * {
@@ -28,11 +74,11 @@
 
 body {
   margin: 0;
-  background: var(--ui-background);
-  color: var(--ui-foreground);
-  font-family: var(--ui-font-sans);
-  font-size: var(--ui-font-size);
-  line-height: var(--ui-line-height);
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: var(--leading);
 }
 
 h1,
@@ -65,19 +111,19 @@ a {
 }
 
 .mono {
-  font-family: var(--ui-font-mono);
+  font-family: var(--font-mono);
 }
 
 .muted {
-  color: var(--ui-muted-foreground);
+  color: var(--color-muted-fg);
 }
 
 .small {
-  font-size: 0.75rem;
+  font-size: var(--text-xs);
 }
 
 .error-text {
-  color: var(--ui-destructive);
+  color: var(--color-danger);
 }
 
 .spacer {
@@ -144,7 +190,7 @@ a svg {
     position: fixed;
     inset: 0;
     z-index: 9;
-    background: var(--ui-overlay);
+    background: var(--color-overlay);
   }
 
   .app,
@@ -157,7 +203,7 @@ a svg {
     inset: 0 auto 0 0;
     z-index: 10;
     width: var(--sidebar-width);
-    box-shadow: var(--ui-shadow);
+    box-shadow: var(--shadow);
   }
 }
 
@@ -168,12 +214,16 @@ a svg {
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-3);
-  background: var(--sidebar-bg);
-  border-right: 1px solid var(--ui-border);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
   position: sticky;
   top: 0;
   height: 100vh;
   overflow: hidden;
+}
+
+.brand svg {
+  color: var(--color-accent);
 }
 
 .brand {
@@ -181,8 +231,8 @@ a svg {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) var(--space-2);
-  font-weight: 600;
-  font-size: 0.9375rem;
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-md);
   text-decoration: none;
   border-radius: var(--radius);
 }
@@ -192,7 +242,7 @@ a svg {
 }
 
 .sidebar-search [data-slot="input-group"] svg {
-  color: var(--ui-muted-foreground);
+  color: var(--color-muted-fg);
 }
 
 .bucket-nav {
@@ -220,31 +270,33 @@ a svg {
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius);
   text-decoration: none;
-  font-family: var(--ui-font-mono);
+  font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .bucket-nav a:hover {
-  background: var(--ui-border);
+  background: var(--color-selected);
 }
 
 .bucket-nav a[aria-current="page"] {
-  background: var(--ui-background);
-  font-weight: 600;
-  box-shadow: inset 0 0 0 1px var(--ui-border);
+  background: var(--color-bg);
+  font-weight: var(--weight-semibold);
+  box-shadow:
+    inset 2px 0 0 var(--color-accent),
+    inset 0 0 0 1px var(--color-border);
 }
 
 /* --------------------------------------------------------------- top bar */
 
 .topbar {
-  border-bottom: 1px solid var(--ui-border);
+  border-bottom: 1px solid var(--color-border);
   padding: var(--space-3) var(--space-6) 0;
   position: sticky;
   top: 0;
   z-index: 5;
-  background: var(--ui-background);
+  background: var(--color-bg);
 }
 
 .topbar-row {
@@ -256,8 +308,8 @@ a svg {
 }
 
 .topbar-title {
-  font-size: 1.125rem;
-  font-weight: 600;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -300,22 +352,108 @@ a svg {
   flex-wrap: wrap;
 }
 
-.empty {
+/* ---------------------------------------------------------------- states */
+
+/* Loading, empty and error look the same on every screen (States.tsx). */
+.state {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-6) var(--space-4);
-  border: 1px dashed var(--ui-border);
-  border-radius: var(--radius);
+  gap: var(--space-2);
+  padding: var(--space-8) var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
   text-align: center;
+  overflow-wrap: anywhere;
 }
 
-.page.empty {
-  margin: var(--space-6);
+.state-icon {
+  display: grid;
+  place-items: center;
+  width: var(--control-height);
+  height: var(--control-height);
+  margin-bottom: var(--space-1);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-muted-fg);
+}
+
+.state-title {
+  font-weight: var(--weight-medium);
+  font-size: var(--text-md);
+}
+
+.state-hint {
+  color: var(--color-muted-fg);
+  max-width: 36rem;
+}
+
+.state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.state-error {
+  border-style: solid;
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-soft);
+}
+
+.state-error .state-icon {
+  background: var(--color-bg);
+  color: var(--color-danger);
+}
+
+.state-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) 0;
+  color: var(--color-muted-fg);
+}
+
+.spinner {
+  width: 0.875em;
+  height: 0.875em;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-muted-fg);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+/* A form or dialog's own failure, as opposed to a field's (.error-text.small). */
+p.error-text[role="alert"]:not(.small) {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-danger-border);
+  border-radius: var(--radius);
+  background: var(--color-danger-soft);
+  overflow-wrap: anywhere;
 }
 
 /* ---------------------------------------------------------------- tables */
+
+/* Every table sits in a bordered, rounded frame that scrolls sideways if it must. */
+.table-wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+}
 
 .table {
   width: 100%;
@@ -324,21 +462,28 @@ a svg {
 
 .table th {
   text-align: left;
-  font-weight: 500;
-  color: var(--ui-muted-foreground);
-  border-bottom: 1px solid var(--ui-border);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.02em;
+  color: var(--color-muted-fg);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
   padding: var(--space-2) var(--space-3);
   white-space: nowrap;
 }
 
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
 .table td {
-  border-bottom: 1px solid var(--ui-border);
+  border-bottom: 1px solid var(--color-border);
   padding: var(--space-2) var(--space-3);
   vertical-align: middle;
 }
 
 .table tbody tr:hover {
-  background: var(--row-hover);
+  background: var(--color-hover);
 }
 
 .table td.num,
@@ -359,6 +504,12 @@ a svg {
 
 .table td a:hover {
   text-decoration: underline;
+  color: var(--color-accent);
+}
+
+.table tbody tr:has(input:checked),
+.table tbody tr:has([data-slot="checkbox"][data-checked]) {
+  background: var(--color-accent-soft);
 }
 
 /* ------------------------------------------------------------ breadcrumb */
@@ -371,7 +522,7 @@ a svg {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1);
-  font-family: var(--ui-font-mono);
+  font-family: var(--font-mono);
 }
 
 .breadcrumb li {
@@ -381,7 +532,7 @@ a svg {
 }
 
 .breadcrumb li svg {
-  color: var(--ui-muted-foreground);
+  color: var(--color-muted-fg);
 }
 
 .breadcrumb a {
@@ -395,7 +546,7 @@ a svg {
 }
 
 .breadcrumb [aria-current="page"] {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   padding: 0 var(--space-1);
 }
 
@@ -410,7 +561,7 @@ a svg {
 .toast-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -429,8 +580,8 @@ a svg {
 }
 
 .panel h2 {
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
 }
 
 .details {
@@ -441,7 +592,7 @@ a svg {
 }
 
 .details dt {
-  color: var(--ui-muted-foreground);
+  color: var(--color-muted-fg);
 }
 
 .details dd {
@@ -449,7 +600,7 @@ a svg {
 }
 
 .rule {
-  border: 1px solid var(--ui-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: var(--space-4);
   margin: 0;
@@ -460,7 +611,7 @@ a svg {
 }
 
 .rule-title {
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
   padding: 0;
   overflow-wrap: anywhere;
 }
@@ -519,7 +670,7 @@ a svg {
 }
 
 .object-filter [data-slot="input-group"] svg {
-  color: var(--ui-muted-foreground);
+  color: var(--color-muted-fg);
 }
 
 .objects-table .select {
@@ -536,7 +687,7 @@ a svg {
 .objects-table .entry svg {
   flex-shrink: 0;
   margin-top: 0.2em;
-  color: var(--ui-muted-foreground);
+  color: var(--color-muted-fg);
 }
 
 .objects-table td.nowrap {
@@ -545,7 +696,7 @@ a svg {
 
 .objects-table td.etag {
   max-width: 10rem;
-  color: var(--ui-muted-foreground);
+  color: var(--color-muted-fg);
 }
 
 .objects-table th.actions,
@@ -578,7 +729,7 @@ a svg {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-6) var(--space-4);
-  border: 1px dashed var(--ui-border);
+  border: 1px dashed var(--color-border);
   border-radius: var(--radius);
   text-align: center;
 }
@@ -586,12 +737,12 @@ a svg {
 .dropzone > svg {
   width: 24px;
   height: 24px;
-  color: var(--ui-muted-foreground);
+  color: var(--color-muted-fg);
 }
 
 .dropzone[data-dragging] {
-  border-color: var(--ui-ring-border);
-  background: var(--row-hover);
+  border-color: var(--color-accent);
+  background: var(--color-hover);
 }
 
 .upload-list,
@@ -611,14 +762,14 @@ a svg {
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--ui-border);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .upload-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 2rem;
+  min-height: var(--control-height);
 }
 
 .upload-head .truncate {
@@ -633,21 +784,21 @@ a svg {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  color: var(--ui-muted-foreground);
+  color: var(--color-muted-fg);
 }
 
 .upload-item[data-status="done"] .upload-status {
-  color: var(--ui-foreground);
+  color: var(--color-success);
 }
 
 .upload-item[data-status="failed"] .upload-status {
-  color: var(--ui-destructive);
+  color: var(--color-danger);
 }
 
 .error-list li {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: calc(var(--space-1) / 2);
 }
 
 /* ---------------------------------------------------------- object drawer */
@@ -668,7 +819,7 @@ a svg {
   align-items: flex-start;
   gap: var(--space-3);
   padding: var(--space-4) var(--space-6);
-  border-bottom: 1px solid var(--ui-border);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .drawer-heading {
@@ -690,8 +841,8 @@ a svg {
 }
 
 .drawer-body .panel h3 {
-  font-size: 0.875rem;
-  font-weight: 600;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
 }
 
 .drawer-body .details dd {
@@ -724,9 +875,9 @@ a svg {
   display: flex;
   justify-content: center;
   padding: var(--space-3);
-  border: 1px solid var(--ui-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: var(--ui-muted);
+  background: var(--color-surface);
 }
 
 .preview-image img {
@@ -740,10 +891,10 @@ a svg {
   max-height: 24rem;
   overflow: auto;
   padding: var(--space-3);
-  border: 1px solid var(--ui-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: var(--ui-muted);
-  font-size: 0.75rem;
+  background: var(--color-surface);
+  font-size: var(--text-xs);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

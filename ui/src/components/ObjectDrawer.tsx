@@ -16,7 +16,7 @@ import {
 } from "@ui-sdk/react/drawer"
 import { Field, FieldError, FieldLabel, FieldLegend, FieldSet } from "@ui-sdk/react/field"
 import { Input } from "@ui-sdk/react/input"
-import { api, isApiError, objectUrl, send, type ObjectMeta } from "../api"
+import { api, errorDetail, isApiError, objectUrl, send, type ObjectMeta } from "../api"
 import { downloadObject } from "../download"
 import { formatAbsolute, formatSize } from "../format"
 import {
@@ -32,6 +32,7 @@ import {
 } from "../metadata"
 import { displayEtag } from "../objects"
 import { DownloadIcon, PlusIcon, TrashIcon, XIcon } from "./Icons"
+import { ErrorState, Loading } from "./States"
 import { notify } from "./Toasts"
 
 const PLACEHOLDERS: Record<StandardHeader, string> = {
@@ -41,10 +42,6 @@ const PLACEHOLDERS: Record<StandardHeader, string> = {
   "Content-Encoding": "e.g. gzip",
   "Content-Language": "e.g. en",
   Expires: "e.g. Wed, 21 Oct 2026 07:28:00 GMT",
-}
-
-function errorText(error: unknown): string {
-  return isApiError(error) ? `${error.message} (${error.code})` : String(error)
 }
 
 export function ObjectDrawer({
@@ -125,7 +122,7 @@ export function ObjectDrawer({
       setForm(formFromHeaders(updated.headers))
       notify.success("Metadata saved", { description: shown })
     } catch (error) {
-      setSaveError(errorText(error))
+      setSaveError(errorDetail(error))
     } finally {
       setSaving(false)
     }
@@ -157,12 +154,12 @@ export function ObjectDrawer({
         </div>
         <div className="drawer-body stack">
           {loadError ? (
-            <div className="empty" role="alert">
-              <p>{isApiError(loadError, "NoSuchKey") ? "This object no longer exists." : "Could not load the object."}</p>
-              <p className="muted">{errorText(loadError)}</p>
-            </div>
+            <ErrorState
+              title={isApiError(loadError, "NoSuchKey") ? "This object no longer exists." : "Could not load the object."}
+              error={loadError}
+            />
           ) : !meta || !form || !problems ? (
-            <p className="muted">Loading…</p>
+            <Loading />
           ) : (
             <>
               <section className="panel" aria-labelledby="drawer-details">
@@ -326,7 +323,7 @@ function ObjectPreview({ bucket, meta }: { bucket: string; meta: ObjectMeta }) {
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
-        setState({ state: "error", message: errorText(error) })
+        setState({ state: "error", message: errorDetail(error) })
       })
     return () => {
       controller.abort()
@@ -335,7 +332,7 @@ function ObjectPreview({ bucket, meta }: { bucket: string; meta: ObjectMeta }) {
   }, [bucket, meta.key, meta.etag, kind])
 
   if (preview.kind === "none") return <p className="muted">{preview.reason}</p>
-  if (state.state === "loading") return <p className="muted">Loading preview…</p>
+  if (state.state === "loading") return <Loading label="Loading preview…" />
   if (state.state === "error") {
     return (
       <p className="error-text" role="alert">
