@@ -2,32 +2,28 @@
 
 The UI is a browser console for the emulator. It lets a developer browse and administer buckets and objects: create and delete buckets, browse and upload objects, edit metadata, copy and move, manage CORS, and abort uploads in progress.
 
-It runs in the same process as the S3 API, on its own port, and is compiled into the single static executable. Its frontend is React with the Vercel UI SDK. Its backend is a JSON API written in C++ that calls the store directly.
-
-The decisions below come from the project owner. Items marked **Open** are not settled and need an answer before the step that depends on them.
+It runs in the same process as the S3 API, on its own port, and is compiled into the single static executable. Its frontend is React with the Vercel UI SDK, built with pnpm and Vite. Its backend is a JSON API written in C++ that calls the store directly.
 
 ## Decisions
 
 | # | Decision |
 | --- | --- |
 | UI1 | The UI listens on its own port, default `3924`. It is set by `--ui-port <n>` or `MICROS3_UI_PORT`. It must differ from the S3 port. It is not served on the S3 port. |
-| UI2 | The UI has no authentication and no access control. It does not sign requests. It has its own JSON API under `/api/`, which does what the UI needs. |
+| UI2 | The UI has no authentication and no access control. It does not sign requests. It has its own JSON API under `/api/`, which does what the UI needs. The request guards in UI6 still apply. |
 | UI3 | The UI is served over plain HTTP. TLS and any reverse proxy are the user's responsibility. |
-| UI4 | The frontend is built at build time and embedded in the executable, so the binary stays one static file with no runtime files. |
+| UI4 | The frontend is a Vite and React project, built with pnpm during the CMake build and embedded in the executable. The binary stays one static file with no runtime files. |
 | UI5 | The UI is always on and always listening. To run without it, do not publish its port. For example, `docker run -p 3923:3923` publishes only the S3 port. |
+| UI6 | Guards on every request to the UI port. The `Host` header must name `localhost` or an IP address. Changing requests (`POST`, `PUT`, `DELETE`) must carry no `Origin` other than the UI's own. These stop DNS rebinding and requests from other web pages. They are not authentication. See **Request guards**. |
+| UI7 | A metadata edit changes the stored headers of the object row in place. It does not copy the blob, so the ETag and last-modified time stay the same. This differs from S3 on purpose. |
+| UI8 | Node.js and pnpm are required to build the executable, in the same way the verifier already requires them. The CMake build runs pnpm itself. |
 
 ## Risks accepted with UI2 and UI5
 
-- **Anyone who can reach the UI port can read and delete all data.** The UI port listens on all interfaces, as the S3 port does. Its protection is network reach only. S3 signatures do not protect it.
+- **Anyone who can reach the UI port can read and delete all data.** The UI port listens on all interfaces, as the S3 port does. Its protection is network reach and the guards in UI6. S3 signatures do not protect it.
 - **Traffic is not encrypted.** UI3 says so. Do not expose the port to untrusted networks.
-- **Web pages in the user's browser can call the API.** This is not an authentication gap. A page on any site can send requests to `http://localhost:3924/api/`. CORS stops that page from reading the replies, but it does not stop the request from being sent. A simple `POST` with `text/plain` needs no preflight, so it would reach the server. See **Open 1**.
+- **The guards are not authentication.** UI6 stops other sites in the user's browser from driving the API, and stops DNS rebinding. A client outside a browser can still send any request without an `Origin` header.
+- **A reverse proxy must keep `Host` unchanged.** The guards compare `Host` and `Origin`. A proxy that rewrites `Host`, or that serves the UI over HTTPS, will have its requests refused. The README says so.
 - **The Vercel UI SDK is in beta.** Its own documentation says its APIs may still change. Pin exact versions, and keep UI code that uses it in few places.
-
-## Open
-
-1. **Origin check on changing requests (recommended).** Reject `POST`, `PUT` and `DELETE` on `/api/` when the `Origin` header is present and is not the UI's own origin. Also reject any request whose `Host` header is not `localhost`, `127.0.0.1`, `[::1]`, or the address the server was started on. The second check blocks DNS rebinding. This is not authentication. It keeps other sites from driving the API through the user's browser. It needs no login. Confirm before implementation.
-2. **Metadata edit in place.** Editing metadata in the UI updates the `headers` column of the object row. It does not copy the blob, and it keeps the ETag and last-modified time. S3 would copy the object and change its last-modified time. The UI's behavior would then differ from S3's. Confirm that this difference is acceptable.
-3. **Node.js at build time.** The frontend build needs Node.js and npm. A C++-only build would then need Node too. The alternative is to commit the built `ui/dist` output. Confirm which to use.
 
 ## Architecture
 
@@ -38,8 +34,9 @@ The decisions below come from the project owner. Items marked **Open** are not s
         v                                             v
   +------------------------+              +------------------------+
   | UI listener (3924)     |              | S3 listener (3923)     |
-  | embedded static files  |              | SigV4, router, S3      |
-  | /api/* JSON routes     |              | handlers (XML)         |
+  | guards (UI6)           |              | SigV4, router, S3      |
+  | embedded static files  |              | handlers (XML)         |
+  | /api/* JSON routes     |              |                        |
   +------------------------+              +------------------------+
         |                                             |
         +----------------------+----------------------+
@@ -70,6 +67,15 @@ Startup binds both ports. If either fails to bind, the server logs the error and
 
 Flags beat environment variables, which beat defaults, as they do now.
 
+## Request guards (UI6)
+
+The guards run on every request to the UI port, before routing. A refused request gets 403 `AccessForbidden` in the JSON error shape.
+
+1. **Host.** The `Host` header must be `localhost` (any case), or an IPv4 address, or a bracketed IPv6 address. It may have a port, which must equal the UI port. A missing `Host` is refused. A name for any other host is refused. A page on another site cannot make its own name point at this server and still pass this check, which stops DNS rebinding.
+2. **Origin.** For `POST`, `PUT` and `DELETE` only: if an `Origin` header is present, it must equal `http://` followed by the `Host` header value. Requests with no `Origin` (curl, scripts) pass. `GET` and `HEAD` are not checked. They change nothing, and CORS already hides their replies from other sites.
+
+These guards are part of the design, so the verifier and the S3 port are unaffected.
+
 ## Backend: the JSON API
 
 The UI service is an `http::Service`, like the S3 service. It reuses the same request and exchange types, so streaming works the same way.
@@ -96,7 +102,7 @@ The UI service is an `http::Service`, like the S3 service. It reuses the same re
 | PUT | `/api/buckets/{bucket}/object?key=` | Upload a file. The raw body is the content. Headers `Content-Type`, `Cache-Control` and `x-amz-meta-*` are stored | `StagedBlob`, `objects::metadata_from`, `objects::put` |
 | GET | `/api/buckets/{bucket}/object?key=` | Download the content, streamed from the blob file | `objects::find`, `FileBody` |
 | GET | `/api/buckets/{bucket}/meta?key=` | Object details as JSON: size, ETag, last-modified, stored headers | `objects::find` |
-| PUT | `/api/buckets/{bucket}/meta?key=` | Replace stored headers, body `{headers: {...}}` (Open 2) | `objects::find`, a new `objects::update_headers` |
+| PUT | `/api/buckets/{bucket}/meta?key=` | Replace stored headers in place, body `{headers: {...}}` (UI7) | `objects::find`, `objects::update_headers` |
 | POST | `/api/buckets/{bucket}/delete` | Delete a batch of keys, body `{keys: [...]}` | `objects::remove_many` |
 | POST | `/api/buckets/{bucket}/copy` | Copy or move one object, body `{source: {bucket, key}, destination: {bucket, key}, move}` | `objects::copy`, extracted from `copy_object` |
 | GET | `/api/buckets/{bucket}/cors` | Stored CORS configuration as XML, or 404 `NoSuchCORSConfiguration` | `cors::load` |
@@ -107,13 +113,17 @@ The UI service is an `http::Service`, like the S3 service. It reuses the same re
 
 The UI does not need `ListObjects` v1, multipart upload creation, or part uploads. A large upload uses the single `PUT` above, up to the store's 5 GiB limit.
 
+### Metadata edits (UI7)
+
+`PUT /api/buckets/{bucket}/meta` rewrites the `headers` column of the object's row in one transaction. The blob is not touched, and the ETag and last-modified time stay as they were. S3 would copy the object and change its last-modified time. Callers that compare the two behaviors will see the difference, and it is intended.
+
 ### Shared code
 
 Some of the logic the routes need is currently inside the S3 handlers. It moves into library functions that both the S3 handlers and the UI service call, so S3 behavior does not change:
 
 - `objects::copy`, from `copy_object` in `lib/object_handlers.cpp`.
 - The "empty bucket" loop, which the bucket removal path also needs for uploads.
-- `objects::update_headers`, a new function. It rewrites the `headers` column in one transaction.
+- `objects::update_headers`, a new function for UI7.
 
 After this refactor the full `verify` run must still pass, unchanged.
 
@@ -121,7 +131,7 @@ After this refactor the full `verify` run must still pass, unchanged.
 
 ### Stack
 
-- **React 19** with **TypeScript**, built with **Vite**.
+- **React 19** with **TypeScript**, built with **Vite**, and managed with **pnpm**. The pnpm version is pinned by the `packageManager` field in `ui/package.json`, and the lockfile is committed.
 - **Vercel UI SDK**: `@ui-sdk/react` for components and `@ui-sdk/core` for behavior, both at exact pinned versions. The SDK components are unstyled and provide keyboard, focus and ARIA behavior. Each component is imported from its own entry, for example `@ui-sdk/react/dialog`.
 - **Styling**: `@ui-sdk/core/web.css` as the base look, then our own design tokens (CSS variables on `:root`) for colors, spacing, radii and type. Light and dark themes both come from the tokens.
 - **No router library.** The app uses hash routes such as `#/buckets/photos/objects?prefix=2026/`. A static file server then needs no fallback rules, and a reload keeps the place.
@@ -137,7 +147,7 @@ The SDK has no data table, breadcrumbs, or sidebar. Those parts are built in our
    - **Objects.** A breadcrumb for the prefix, a filter box, and a table of folders and objects, with checkboxes. Actions: Upload, New folder, Delete selected, and a row menu with Download, Details, Copy or move, and Delete. "Load more" pages through results.
    - **Uploads.** In-progress multipart uploads, with Abort.
    - **Settings.** Region and default encryption, read-only. CORS rules as a form that builds the XML, with Save and Remove.
-3. **Object drawer.** Details from `meta`. A metadata form with `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`, and rows for `x-amz-meta-*`. Preview for images and for text up to 1 MiB (Open 2 applies to the save).
+3. **Object drawer.** Details from `meta`. A metadata form with `Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`, and rows for `x-amz-meta-*`. Saving changes the stored headers in place (UI7). Preview for images and for text up to 1 MiB.
 4. **Uploads.** A File Input accepts a drop or a file choice. Each file has a progress bar, from `XMLHttpRequest` upload events. Toasts report success and failure.
 
 ### Layout and style
@@ -157,32 +167,57 @@ The SDK has no data table, breadcrumbs, or sidebar. Those parts are built in our
 
 ## Build and embedding
 
-- `ui/` holds the Vite project: `package.json`, a committed lockfile, `src/`, and `index.html`. `ui/node_modules` and `ui/dist` are not committed.
-- CMake runs `npm ci` and `npm run build` in `ui/` as a custom command, with the output in the build directory. Its inputs are every file under `ui/` except `node_modules` and `dist`, plus the lockfile, so an edit rebuilds the UI and then the binary. (Open 3.)
-- A CMake script run with `cmake -P` reads every file in the built `dist/` directory and writes `ui_assets.cpp` into the build directory. Each entry holds the path, the content type, the bytes and the size. The script is the same on every platform, and it needs no extra program.
+The UI is built by the same CMake project that builds the executable. Nothing is built by hand, and a plain `cmake --build` builds the UI when it needs building.
+
+### Tools
+
+- **Node.js**, at the version the pinned Vite requires. The spike (U5) records that version.
+- **pnpm**, the version pinned in `ui/package.json`. It is run through corepack, which ships with Node.js. The verifier already uses pnpm, so developers have it.
+- CMake looks for `node` and `pnpm` at configure time. If either is missing, configuration stops with an error that says to install Node.js and run `corepack enable`.
+
+### Layout
+
+- `ui/`: `package.json` (with `packageManager`), `pnpm-lock.yaml`, `index.html`, `vite.config.ts`, `tsconfig.json`, and `src/`.
+- `ui/node_modules` is installed by pnpm and is not committed.
+- The Vite output is not written into the source tree. It goes to the build directory, so `ui/dist` does not exist.
+- `cmake/embed_ui.cmake` is the embedding script.
+
+### Pipeline
+
+The CMake targets form this chain.
+
+1. **`ui_install`**, a custom target that runs on every build: `pnpm install --frozen-lockfile` in `ui/`. When nothing has changed, pnpm finishes in about a second. It covers a fresh clone, a deleted `node_modules`, and a changed lockfile, so no separate stamp can go stale.
+2. **`ui_build`**, a custom command that produces `<build>/ui/build.stamp`. It runs `pnpm exec vite build --outDir <build>/ui/dist --emptyOutDir` in `ui/`. Its dependencies are every file under `ui/` except `node_modules`, found with `file(GLOB_RECURSE ... CONFIGURE_DEPENDS)`. It runs only when one of those files is newer than the stamp, so an edit to `ui/src` rebuilds the UI, and a build with no UI edit does not run Vite.
+3. **`ui_assets.cpp`**, a custom command that runs `cmake -P cmake/embed_ui.cmake`. The script reads every file in `<build>/ui/dist`, in sorted order, and writes a table: path, content type, bytes and size. It writes to a temporary file and then uses `cmake -E copy_if_different`, so `libmicros3` is not rebuilt when the bytes are the same.
+4. **`ui_assets`**, a custom target that depends on `ui_install` and on `ui_assets.cpp`. `libmicros3` depends on it, so the ordering is right: install, then build, then embed, then compile.
+
+The test target links `libmicros3`, so it builds the UI too.
+
+### Packaging
+
 - `ui_assets.cpp` is compiled into `libmicros3`. The UI service serves the entries as the S3 service serves its responses.
 - The generated bytes are part of the executable's read-only data. The binary stays static, and the static check in `test/static-check.sh` still applies.
-- The Dockerfile's builder stage installs Node.js and npm (Alpine packages), and copies `ui/`. `.dockerignore` must not exclude `ui/`, but must exclude `ui/node_modules` and `ui/dist`. The final image is still `FROM scratch` with only the binary.
+- The Dockerfile's builder stage installs Node.js and corepack (Alpine packages), runs `corepack enable`, and copies `ui/` before the CMake step. `.dockerignore` must not exclude `ui/`, but must exclude `ui/node_modules`. The final image is still `FROM scratch` with only the binary.
 - Build sizes are recorded before and after the UI, as an input to a later decision about size budgets.
 
 ### Development loop
 
-`npm run dev` in `ui/` starts the Vite dev server. It proxies `/api` to a running `micros3 --ui-port 3924`. The S3 side is separate, and verify still runs against the S3 port.
+`pnpm dev` in `ui/` starts the Vite dev server. It proxies `/api` to a running `micros3 --ui-port 3924`. The S3 side is separate, and verify still runs against the S3 port.
 
 ## Testing
 
-- **C++.** `test/ui_api_test.cpp` tests each route with the same server-test setup as today. It covers both success and error codes, the `key=` parameter with awkward keys (spaces, `%`, `/`, UTF-8, `<script>`), batch limits, and the `BucketNotEmpty` path. `test/ui_assets_test.cpp` checks that `index.html` is embedded, with the right content types.
+- **C++.** `test/ui_api_test.cpp` tests each route with the same server-test setup as today. It covers both success and error codes, the `key=` parameter with awkward keys (spaces, `%`, `/`, UTF-8, `<script>`), batch limits, and the `BucketNotEmpty` path. `test/ui_test.cpp` covers the guards (Host and Origin, including rebinding names and a proxy-style rewritten Host), static serving, and 404 for S3-style paths. `test/ui_assets_test.cpp` checks that `index.html` is embedded, with the right content types.
+- **Build.** Checks for the CMake pipeline: a clean clone builds the UI; editing one `ui/src` file rebuilds the UI and the binary; a build with no UI edit does not run Vite; deleting `ui/node_modules` is repaired by the next build; changing the lockfile reinstalls; a missing pnpm stops configuration with the message above.
 - **Frontend unit tests.** Vitest tests the API client, the key and URL helpers, and the metadata form's header mapping.
 - **Browser tests.** Playwright, through the playwright-cli skill, drives these flows against a running binary: create a bucket, upload into a folder, browse, download, edit metadata, copy and move, delete, empty and delete the bucket, set and remove CORS, and abort an upload. The run saves screenshots, which are checked by eye for layout and both themes.
-- **Scripts.** `test/ui-check.sh` uses curl to check the UI port: `/` and asset types, `/api/health`, that S3 paths on the UI port answer 404, and that HEAD has no body.
+- **Scripts.** `test/ui-check.sh` uses curl to check the UI port: `/` and asset types, `/api/health`, that S3 paths on the UI port answer 404, that HEAD has no body, and that a request with a foreign `Host` or `Origin` is refused.
 - **Regression.** A full `verify` run against the S3 port must still pass every check, and `testmicros3`, the persistence, crash, static and Docker scripts must pass.
 
 ## Known gaps and later work
 
 - Authentication, if the UI is ever exposed beyond a trusted network. Not planned.
-- A metadata edit that matches S3 exactly (Open 2).
 - Pagination of very large buckets in the UI beyond "Load more".
 
 ## Status
 
-Design only. No code has been written. The steps are in [todo.md](todo.md), under "Web UI".
+The design is settled: UI1 to UI8, with the guards in UI6. No code has been written. The steps are in [todo.md](todo.md), under "Web UI".

@@ -2,7 +2,7 @@
 
 ## Goals and scope
 
-MicroS3 must pass a full run of `verify` against it, with every check passing, as a full run against AWS S3 does. It implements the operations that `verify` exercises and no others.
+MicroS3 must pass a full run of `verify` against it, with every check passing, as a full run against AWS S3 does. Its S3 API implements the operations that `verify` exercises and no others. The web UI (see Web UI) is a separate, non-S3 surface on its own port, and this limit does not apply to it.
 
 In scope, from [lib/README.md](../lib/README.md) and the SDK commands in `verify/checks`:
 
@@ -47,7 +47,7 @@ The verifier has offline unit tests (`pnpm test:unit`, 234 tests). They use a Si
 
 ## Architecture
 
-MicroS3 is one C++17 executable, `micros3`, built by the existing CMake project. The current `src/main.cpp` serves `Hello, world!` on port 3923 with uWebSockets. All third-party code is downloaded by CMake, as the next section describes.
+MicroS3 is one C++17 executable, `micros3`, built by the existing CMake project. It has two listeners on one uWebSockets event loop: the S3 API on port 3923 and the web UI on port 3924 (see Web UI). All third-party code is downloaded by CMake, as the next section describes.
 
 ### Third-party libraries
 
@@ -65,16 +65,17 @@ CMake downloads each third-party library with `FetchContent`, as it already does
 
 If the installed CMake cannot check a `SHA3_256` hash, raise `cmake_minimum_required` rather than drop the hash.
 
-Two configuration options, each set by a flag or an environment variable:
+Three configuration options, each set by a flag or an environment variable:
 
 - `--data-dir <path>`, or `MICROS3_DATA_DIR`. Default `./data`.
-- `--port <n>`, or `MICROS3_PORT`. Default `3923`.
+- `--port <n>`, or `MICROS3_PORT`. Default `3923`. The S3 API.
+- `--ui-port <n>`, or `MICROS3_UI_PORT`. Default `3924`. The web UI. It must differ from `--port`, or startup is a usage error.
 
 Command-line flags take precedence over environment variables, which take precedence over the defaults. Docker sets the environment variables, so the container needs no arguments. Credentials are not flags. They come only from `MICROS3_ACCESS_KEY_ID` and `MICROS3_SECRET_ACCESS_KEY`, defaulting to `test` and `test`, so secrets stay out of the process list.
 
-The executable is linked statically (`-static`) against musl, so it needs no libraries from the image. The Docker builder stage is Alpine. The image is `FROM scratch` with the binary and a `/data` volume. It runs as numeric user `65532:65532`, and `/data` is owned by that user, because `scratch` has no user database.
+The executable is linked statically (`-static`) against musl, so it needs no libraries from the image. The Docker builder stage is Alpine. The image is `FROM scratch` with the binary and a `/data` volume, and it exposes two ports, 3923 for S3 and 3924 for the UI. It runs as numeric user `65532:65532`, and `/data` is owned by that user, because `scratch` has no user database.
 
-Request path, in order:
+Request path on the S3 port, in order:
 
 1. HTTP layer (uWebSockets) accepts the connection and reads the body as a stream.
 2. Router splits the path-style URL into bucket, key and query, and selects the operation from the method and subresource (`?uploads`, `?uploadId=`, `?cors`, `?encryption`, `?location`, `?list-type=2`). Unsupported subresources and out-of-scope operations return `NotImplemented` (501).
@@ -84,7 +85,7 @@ Request path, in order:
 
 Put and multipart parts stream to a temporary file in the data directory, then rename into place. A failed or interrupted upload therefore never leaves a partial object visible.
 
-Every request follows this path. Only the handlers touch the store, so they are the one place to test behavior.
+Every request on the S3 port follows this path. Requests on the UI port take their own path, described in Web UI: guards first (UI6), then the static files or the JSON API, which call the same store functions as the S3 handlers.
 
 ```
   +----------------------+
@@ -93,7 +94,7 @@ Every request follows this path. Only the handlers touch the store, so they are 
              |
              v
   +----------------------+
-  | HTTP server          |  uWebSockets on port 3923, streams bodies
+  | HTTP server          |  uWebSockets, S3 listener on port 3923
   +----------------------+
              |
              v
@@ -123,6 +124,49 @@ Every request follows this path. Only the handlers touch the store, so they are 
   | write       | |                               |
   +-------------+ +-------------------------------+
 ```
+
+### Two listeners
+
+```
+  Browser                                   S3 clients
+     | http://host:3924/                       | http://host:3923/
+     v                                         v
+  +---------------------------+         +---------------------------+
+  | UI listener (3924)        |         | S3 listener (3923)        |
+  | 1. guards: Host, Origin   |         | router, SigV4, handlers,  |
+  | 2. static files or /api/* |         | XML writer (above)        |
+  +---------------------------+         +---------------------------+
+               |                                     |
+               +------------------+------------------+
+                                  v
+                       Store (SQLite and blobs)
+```
+
+Both listeners run on the same event loop and thread, each with its own `http::Service`. If either port fails to bind, startup logs the error and exits with status 1.
+
+## Web UI
+
+A browser console to browse and administer buckets and objects. Its full design is in [UI.md](UI.md), and its steps are in [todo.md](todo.md). The owner's decisions:
+
+| # | Decision |
+| --- | --- |
+| UI1 | The UI listens on its own port, default `3924`, set by `--ui-port <n>` or `MICROS3_UI_PORT`. It must differ from the S3 port. It is not served on the S3 port. |
+| UI2 | No authentication and no signing in the browser. The UI has its own JSON API under `/api/` on the UI port, which calls the store directly. The guards in UI6 still apply. |
+| UI3 | Plain HTTP. TLS and reverse proxies are the user's concern. |
+| UI4 | The frontend is a Vite and React project, built with pnpm during the CMake build and embedded in the executable, which stays one static file. |
+| UI5 | Always on. To run without the UI, do not publish its port, for example `docker run -p 3923:3923`. |
+| UI6 | Request guards on every UI request, before routing. `Host` must be `localhost` or an IP address, with the UI port if a port is given. `POST`, `PUT` and `DELETE` must carry no `Origin` other than `http://` plus `Host`. Refusals are 403 `AccessForbidden`. This stops DNS rebinding and requests from other pages. It is not authentication. |
+| UI7 | Metadata edits change the stored headers on the object row in place. The blob, ETag and last-modified time stay the same. This differs from S3 on purpose. |
+| UI8 | Node.js and pnpm are required to build, as the verifier already requires them. CMake runs pnpm itself. |
+
+Request order on the UI port:
+
+1. HTTP layer (the same uWebSockets loop as the S3 listener).
+2. Guards (UI6). A refused request gets 403 `AccessForbidden` as JSON.
+3. `/api/*` goes to the JSON API. Other `GET` and `HEAD` paths are served from the embedded files. Anything else is 404, including S3-style requests.
+4. API handlers call the shared store functions (`buckets::*`, `objects::*`, `cors::*`, `uploads::*`) and answer with JSON errors that use the S3 codes and statuses.
+
+The UI port is not signed, so its protection is network reach and the guards. The S3 port, SigV4 and `verify` are unaffected by it.
 
 ## Storage design
 
@@ -277,11 +321,11 @@ Run it in Docker:
 
 ```sh
 docker build -t micros3 .
-docker run --rm -p 3923:3923 -v micros3-data:/data micros3
+docker run --rm -p 3923:3923 -p 3924:3924 -v micros3-data:/data micros3
 # from the host, with the same verify command as above
 ```
 
-The image sets `MICROS3_DATA_DIR=/data` and `MICROS3_PORT=3923`. The image contains only the executable, built `FROM scratch`, and it runs as `65532:65532`. Set `MICROS3_ACCESS_KEY_ID` and `MICROS3_SECRET_ACCESS_KEY` with `-e` to change the credentials. Confirm that with `docker run --rm --entrypoint /bin/sh micros3`, which must fail because there is no shell.
+The image sets `MICROS3_DATA_DIR=/data`, `MICROS3_PORT=3923` and `MICROS3_UI_PORT=3924`, and exposes both ports. Publishing only `-p 3923:3923` runs without the UI. The image contains only the executable, built `FROM scratch`, and it runs as `65532:65532`. Set `MICROS3_ACCESS_KEY_ID` and `MICROS3_SECRET_ACCESS_KEY` with `-e` to change the credentials. Confirm that with `docker run --rm --entrypoint /bin/sh micros3`, which must fail because there is no shell.
 
 Emulator-only tests, in addition to `verify`:
 
