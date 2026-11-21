@@ -42,7 +42,7 @@ int main(int argc, char **argv) {
     }
 
     micros3::S3Service s3_service(*store, {cfg.access_key_id, cfg.secret_access_key});
-    micros3::UiService ui_service(*store);
+    micros3::UiService ui_service(*store, cfg.ui_port);
     micros3::Server server({&s3_service, &ui_service});
     const bool listening = server.run({cfg.port, cfg.ui_port}, [&cfg](const std::vector<int> &bound) {
         if (bound[0] != 0 && bound[1] != 0) {

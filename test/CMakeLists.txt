@@ -11,6 +11,7 @@ add_executable(testmicros3
     server_test.cpp
     sigv4_test.cpp
     store_test.cpp
+    ui_test.cpp
     uploads_test.cpp
     xml_test.cpp
 )

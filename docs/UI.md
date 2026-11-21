@@ -72,7 +72,7 @@ Flags beat environment variables, which beat defaults, as they do now.
 The guards run on every request to the UI port, before routing. A refused request gets 403 `AccessForbidden` in the JSON error shape.
 
 1. **Host.** The `Host` header must be `localhost` (any case), or an IPv4 address, or a bracketed IPv6 address. It may have a port, which must equal the UI port. A missing `Host` is refused. A name for any other host is refused. A page on another site cannot make its own name point at this server and still pass this check, which stops DNS rebinding.
-2. **Origin.** For `POST`, `PUT` and `DELETE` only: if an `Origin` header is present, it must equal `http://` followed by the `Host` header value. Requests with no `Origin` (curl, scripts) pass. `GET` and `HEAD` are not checked. They change nothing, and CORS already hides their replies from other sites.
+2. **Origin.** For `POST`, `PUT` and `DELETE` (in the code, every method other than `GET` and `HEAD`): if an `Origin` header is present, it must equal `http://` followed by the `Host` header value. Requests with no `Origin` (curl, scripts) pass. `GET` and `HEAD` are not checked. They change nothing, and CORS already hides their replies from other sites.
 
 These guards are part of the design, so the verifier and the S3 port are unaffected.
 
@@ -249,4 +249,4 @@ The built JS contains URL strings that are not fetched: XML namespace URIs (`htt
 
 ## Status
 
-The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3), the shared operation code is extracted (U4), the frontend scaffold in `ui/` is built and checked by the spike (U5), and the typed API client is in `ui/src/api.ts` (U6). The UI port answers only `GET /api/health` so far. The steps are in [todo.md](todo.md), under "Web UI".
+The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3), the shared operation code is extracted (U4), the frontend scaffold in `ui/` is built and checked by the spike (U5), the typed API client is in `ui/src/api.ts` (U6), and the request guards run on every UI request, in `ui::guard` in `lib/ui_api.cpp` (U7). The UI port answers only `GET /api/health` so far. The steps are in [todo.md](todo.md), under "Web UI".
