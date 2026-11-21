@@ -156,14 +156,15 @@ The SDK has no data table, breadcrumbs, or sidebar. Those parts are built in our
 - The layout works from 900 px wide. The sidebar can collapse below that.
 - Every interactive element has a visible focus ring, and every form field has a label.
 - The table is sized to read easily: monospace for keys and ETags, right-aligned sizes, relative and absolute times.
-- Dark mode follows `prefers-color-scheme`. The SDK documents a Preferences component that stores a choice, but the docs we read do not confirm dark mode, so this is to be checked in the spike.
+- Dark mode follows `prefers-color-scheme` by default, and the user can choose Light or Dark. `web.css` colors use `light-dark()` under `color-scheme: light dark`. The choice comes from the SDK's `createColorScheme` with `global: true`, stored in local storage, applied by `Preferences` as `data-color-scheme` on `<html>`. Our stylesheet maps `[data-color-scheme="light"]` and `[data-color-scheme="dark"]` to `color-scheme`. Checked in the U5 spike.
 
 ## Security of the frontend
 
 - React escapes all text. The code never uses `dangerouslySetInnerHTML` or `innerHTML`. A check in the test suite fails the build if it finds either.
 - **Object content is never rendered as HTML on the UI origin.** Previews are only for `image/*` and `text/plain`, `application/json`, shown through a `blob:` URL or as text. Downloads carry `Content-Disposition: attachment`, with the file name encoded as RFC 5987 says. The UI never navigates to an object URL.
-- **Response headers from the UI service**: `Content-Security-Policy: default-src 'self'; img-src 'self' blob:; connect-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`. No HSTS, since the UI is plain HTTP.
-- **CSP and the SDK.** The SDK adds its CSS when a component mounts. Its docs say a strict CSP without `'unsafe-inline'` in `style-src` needs a `csp-nonce` meta tag. The spike decides between a nonce and `'unsafe-inline'` for styles only. Scripts stay `'self'` either way.
+- **Response headers from the UI service**: `Content-Security-Policy: default-src 'self'; img-src 'self' blob: data:; connect-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`. No HSTS, since the UI is plain HTTP.
+- **CSP and the SDK.** The SDK adds its CSS when a component mounts. Its docs say that with a `<meta property="csp-nonce">` tag that has no `nonce` attribute, it adds the CSS as constructed style sheets (`document.adoptedStyleSheets`), which `style-src` does not block. `ui/index.html` has that tag, so the policy needs neither a nonce nor `'unsafe-inline'`, and the server needs no per-request rewriting of `index.html`. Scripts stay `'self'`.
+- **`data:` in `img-src`.** `web.css` draws its icons (chevron, check, minus, plus, x) as `data:image/svg+xml` URLs in CSS variables, used as masks. `img-src` governs those, and without `data:` they are blocked. `data:` is allowed for images only. Vite is set with `assetsInlineLimit: 0`, so our own assets are never inlined as `data:` URLs.
 
 ## Build and embedding
 
@@ -171,7 +172,7 @@ The UI is built by the same CMake project that builds the executable. Nothing is
 
 ### Tools
 
-- **Node.js**, at the version the pinned Vite requires. The spike (U5) records that version.
+- **Node.js** `^20.19.0 || >=22.12.0`, the range the pinned Vite 8.3.8 requires. `ui/package.json` states it in `engines`. The spike used Node 24.15.
 - **pnpm**, the version pinned in `ui/package.json`. It is run through corepack, which ships with Node.js. The verifier already uses pnpm, so developers have it.
 - CMake looks for `node` and `pnpm` at configure time. If either is missing, configuration stops with an error that says to install Node.js and run `corepack enable`.
 
@@ -200,6 +201,16 @@ The test target links `libmicros3`, so it builds the UI too.
 - The Dockerfile's builder stage installs Node.js and corepack (Alpine packages), runs `corepack enable`, and copies `ui/` before the CMake step. `.dockerignore` must not exclude `ui/`, but must exclude `ui/node_modules`. The final image is still `FROM scratch` with only the binary.
 - Build sizes are recorded before and after the UI, as an input to a later decision about size budgets.
 
+### Spike results (U5)
+
+The scaffold in `ui/` pins React 19.3.1, `@ui-sdk/react` and `@ui-sdk/core` 0.1.0-beta.13, Vite 8.3.8, `@vitejs/plugin-react` 6.3.0, TypeScript 7.0.2 and Vitest 5.1.1, all exact, with pnpm 12.21.0 in `packageManager`. A placeholder page with a Button, a Dialog and a color-scheme switch was built and served with the CSP above, then driven in Chromium.
+
+1. **Client-only build.** `pnpm exec vite build --outDir <dir> --emptyOutDir` works with no server rendering. The output is `index.html` plus hashed files under `assets/` (one JS file of about 314 kB, 103 kB gzipped, two small JS chunks, and one CSS file of about 85 kB). `tsc --noEmit` passes.
+2. **Styles under the CSP.** With the nonce-less `csp-nonce` meta tag, the SDK added two constructed style sheets and no `<style>` tags, and opening the Dialog caused no CSP violation under `style-src 'self'`. The one violation found was `img-src` blocking the `data:` icons in `web.css`, so the policy adds `data:` to `img-src`.
+3. **Dark mode.** Works. With the choice at System, the page follows the emulated `prefers-color-scheme`. Choosing Dark sets `data-color-scheme="dark"` on `<html>`, the background becomes `oklch(0.145 0 0)`, and the choice survives a reload.
+
+The built JS contains URL strings that are not fetched: XML namespace URIs (`http://www.w3.org/...`) in React DOM, and React's `https://react.dev/errors/` message text. The check in U21 for external URLs must allow those, and fail on anything the page would load.
+
 ### Development loop
 
 `pnpm dev` in `ui/` starts the Vite dev server. It proxies `/api` to a running `micros3 --ui-port 3924`. The S3 side is separate, and verify still runs against the S3 port.
@@ -220,4 +231,4 @@ The test target links `libmicros3`, so it builds the UI too.
 
 ## Status
 
-The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3). The UI port answers only `GET /api/health` so far. The steps are in [todo.md](todo.md), under "Web UI".
+The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3), the shared operation code is extracted (U4), and the frontend scaffold in `ui/` is built and checked by the spike (U5). The UI port answers only `GET /api/health` so far. The steps are in [todo.md](todo.md), under "Web UI".
