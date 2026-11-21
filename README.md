@@ -96,6 +96,14 @@ container; for another number, set it in both places, as in
 
 A bind-mounted data directory must be writable by user 65532.
 
+Publishing a GitHub release builds the image and pushes it to
+`ghcr.io/cilliemalan/micros3`, tagged with the release tag, and with `latest`
+unless the release is a prerelease. For example:
+
+```sh
+docker pull ghcr.io/cilliemalan/micros3:v0.1
+```
+
 ## Tests
 
 - `ooo/testmicros3` runs the unit and server tests.
