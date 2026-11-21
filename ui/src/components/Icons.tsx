@@ -62,6 +62,13 @@ export const FolderIcon = () => (
   </Icon>
 )
 
+export const FileIcon = () => (
+  <Icon>
+    <path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7Z" />
+    <path d="M14 3v4h4" />
+  </Icon>
+)
+
 export const ChevronRightIcon = () => (
   <Icon>
     <path d="m9 6 6 6-6 6" />

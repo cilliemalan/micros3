@@ -6,8 +6,8 @@ import { Button } from "@ui-sdk/react/button"
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@ui-sdk/react/tabs"
 import { api, isApiError, type BucketDetails } from "../api"
 import { TABS, bucketRoute, navigate, type Tab } from "../route"
-import { Breadcrumb } from "./Breadcrumb"
 import { TrashIcon } from "./Icons"
+import { ObjectsTab } from "./ObjectsTab"
 import { SettingsTab } from "./SettingsTab"
 import { TopBar } from "./TopBar"
 import { UploadsTab } from "./UploadsTab"
@@ -97,8 +97,7 @@ export function BucketPage({
         {body ?? (
           <>
             <TabsPanel value="objects" className="page">
-              <Breadcrumb bucket={bucket} prefix={prefix} />
-              <p className="muted">The object browser is not built yet.</p>
+              {tab === "objects" && <ObjectsTab key={prefix} bucket={bucket} prefix={prefix} />}
             </TabsPanel>
             <TabsPanel value="uploads" className="page">
               {tab === "uploads" && <UploadsTab bucket={bucket} />}

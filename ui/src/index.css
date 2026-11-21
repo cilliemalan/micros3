@@ -510,3 +510,40 @@ a svg {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------------------------------------------------------------- objects */
+
+.object-filter {
+  flex: 1 1 12rem;
+  max-width: 20rem;
+}
+
+.object-filter [data-slot="input-group"] svg {
+  color: var(--ui-muted-foreground);
+}
+
+.objects-table .select {
+  width: 1%;
+  padding-right: 0;
+}
+
+.objects-table .entry {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.objects-table .entry svg {
+  flex-shrink: 0;
+  margin-top: 0.2em;
+  color: var(--ui-muted-foreground);
+}
+
+.objects-table td.nowrap {
+  white-space: nowrap;
+}
+
+.objects-table td.etag {
+  max-width: 10rem;
+  color: var(--ui-muted-foreground);
+}
