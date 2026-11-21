@@ -5,7 +5,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { withUploadCleanup } from './multipart-cleanup.js';
 import { MISSING_BUCKET_UPLOAD_CODES, assertMissing, assertStatus, status, withBucket } from './resources.js';
-import { PrerequisiteError } from '../test-runner.js';
+import { PrerequisiteError, scenario } from '../test-runner.js';
 
 // Other multipart checks use ListParts to observe upload state. A failed or
 // unsupported ListParts request is reported as a missing prerequisite; the
@@ -81,55 +81,70 @@ export async function verifyListParts(client) {
         return result;
       };
 
-      const id = await create(Key);
-      const other = await create(Key);
-      const adjacent = await create(neighbor);
-      assert.equal(new Set([id, other, adjacent]).size, 3, 'independent upload IDs');
+      const { id, other, adjacent } = await scenario('setup', async () => {
+        const ids = { id: await create(Key), other: await create(Key), adjacent: await create(neighbor) };
+        assert.equal(new Set(Object.values(ids)).size, 3, 'independent upload IDs');
+        return ids;
+      });
       // A new upload has no parts.
-      await page(Key, id, {}, []);
+      await scenario('new upload', () => page(Key, id, {}, []));
 
       // Upload out of order and replace a part; the listing is ordered by part number.
-      const third = await upload(Key, id, 3, Buffer.from('third part'));
-      await upload(Key, id, 1, Buffer.from('to be replaced'));
-      const seventh = await upload(Key, id, 7, Buffer.alloc(0));
-      const second = await upload(Key, id, 2, Buffer.from([0, 1, 127, 128, 254, 255]));
-      const first = await upload(Key, id, 1, Buffer.from('first'));
-      const all = [first, second, third, seventh];
-      await page(Key, id, {}, all);
-      const otherPart = await upload(Key, other, 1, Buffer.from('other upload'));
-      const adjacentPart = await upload(neighbor, adjacent, 4, Buffer.from('adjacent'));
-      await page(Key, other, {}, [otherPart]);
-      await page(neighbor, adjacent, {}, [adjacentPart]);
+      const { all, seventh } = await scenario('out-of-order uploads and replacement', async () => {
+        const third = await upload(Key, id, 3, Buffer.from('third part'));
+        await upload(Key, id, 1, Buffer.from('to be replaced'));
+        const seventh = await upload(Key, id, 7, Buffer.alloc(0));
+        const second = await upload(Key, id, 2, Buffer.from([0, 1, 127, 128, 254, 255]));
+        const first = await upload(Key, id, 1, Buffer.from('first'));
+        const all = [first, second, third, seventh];
+        await page(Key, id, {}, all);
+        return { all, seventh };
+      });
+      const otherPart = await scenario('isolation across uploads and keys', async () => {
+        const otherPart = await upload(Key, other, 1, Buffer.from('other upload'));
+        const adjacentPart = await upload(neighbor, adjacent, 4, Buffer.from('adjacent'));
+        await page(Key, other, {}, [otherPart]);
+        await page(neighbor, adjacent, {}, [adjacentPart]);
+        return otherPart;
+      });
 
       // Follow NextPartNumberMarker one part at a time.
-      let marker;
-      const seen = new Set();
-      for (let i = 0; i < all.length; i++) {
-        const input = { MaxParts: 1, ...(marker === undefined ? {} : { PartNumberMarker: marker }) };
-        const result = await list(Key, id, input);
-        assert.deepEqual(summary(result.Parts), [all[i]], `parts page ${i + 1}`);
-        assert.equal(result.IsTruncated, i < all.length - 1, `parts page ${i + 1} truncation`);
-        if (result.IsTruncated) {
-          assert.equal(String(result.NextPartNumberMarker), String(all[i][0]), `parts page ${i + 1} NextPartNumberMarker`);
-          assert.ok(!seen.has(result.NextPartNumberMarker), 'parts markers advance');
-          seen.add(result.NextPartNumberMarker);
-          marker = String(result.NextPartNumberMarker);
+      await scenario('one part per page', async () => {
+        let marker;
+        const seen = new Set();
+        for (let i = 0; i < all.length; i++) {
+          const input = { MaxParts: 1, ...(marker === undefined ? {} : { PartNumberMarker: marker }) };
+          const result = await list(Key, id, input);
+          assert.deepEqual(summary(result.Parts), [all[i]], `parts page ${i + 1}`);
+          assert.equal(result.IsTruncated, i < all.length - 1, `parts page ${i + 1} truncation`);
+          if (result.IsTruncated) {
+            assert.equal(String(result.NextPartNumberMarker), String(all[i][0]), `parts page ${i + 1} NextPartNumberMarker`);
+            assert.ok(!seen.has(result.NextPartNumberMarker), 'parts markers advance');
+            seen.add(result.NextPartNumberMarker);
+            marker = String(result.NextPartNumberMarker);
+          }
         }
-      }
-      const firstPage = await list(Key, id, { MaxParts: 3 });
-      assert.deepEqual(summary(firstPage.Parts), all.slice(0, 3), 'first page of three parts');
-      assert.equal(firstPage.IsTruncated, true, 'first page of three truncated');
-      assert.equal(String(firstPage.NextPartNumberMarker), '3', 'first page of three marker');
-      await page(Key, id, { MaxParts: 3, PartNumberMarker: '3' }, all.slice(3));
+      });
+      await scenario('pages of three parts', async () => {
+        const firstPage = await list(Key, id, { MaxParts: 3 });
+        assert.deepEqual(summary(firstPage.Parts), all.slice(0, 3), 'first page of three parts');
+        assert.equal(firstPage.IsTruncated, true, 'first page of three truncated');
+        assert.equal(String(firstPage.NextPartNumberMarker), '3', 'first page of three marker');
+        await page(Key, id, { MaxParts: 3, PartNumberMarker: '3' }, all.slice(3));
+      });
       // An exact fit is not truncated; a marker need not name an existing part.
-      await page(Key, id, { MaxParts: 4 }, all);
-      await page(Key, id, { PartNumberMarker: '4' }, [seventh]);
-      await page(Key, id, { PartNumberMarker: '7' }, []);
+      await scenario('exact fit and markers naming no part', async () => {
+        await page(Key, id, { MaxParts: 4 }, all);
+        await page(Key, id, { PartNumberMarker: '4' }, [seventh]);
+        await page(Key, id, { PartNumberMarker: '7' }, []);
+      });
 
       // Upload IDs are scoped to their exact key.
-      await assertMissing(() => client.send(new ListPartsCommand({ Bucket, Key: neighbor, UploadId: id })), 'ListParts wrong key', 'NoSuchUpload');
-      await assertMissing(() => client.send(new ListPartsCommand({ Bucket, Key, UploadId: 'nonexistent-upload-id' })), 'ListParts missing upload', 'NoSuchUpload');
-      await withBucket(client, async ({ Bucket: otherBucket, retainForUploads: retainOtherUploads }) => {
+      await scenario('wrong key', () => assertMissing(
+        () => client.send(new ListPartsCommand({ Bucket, Key: neighbor, UploadId: id })), 'ListParts wrong key', 'NoSuchUpload'));
+      await scenario('missing upload', () => assertMissing(
+        () => client.send(new ListPartsCommand({ Bucket, Key, UploadId: 'nonexistent-upload-id' })), 'ListParts missing upload', 'NoSuchUpload'));
+      await scenario('wrong bucket', () => withBucket(client, async ({ Bucket: otherBucket, retainForUploads: retainOtherUploads }) => {
         await withUploadCleanup(client, otherBucket, [Key], retainOtherUploads, async otherKnown => {
           const created = await client.send(new CreateMultipartUploadCommand({ Bucket: otherBucket, Key }));
           if (typeof created.UploadId === 'string' && created.UploadId) otherKnown.push({ Key, UploadId: created.UploadId });
@@ -141,22 +156,26 @@ export async function verifyListParts(client) {
           assert.equal(listed.IsTruncated, false, 'other bucket parts not truncated');
           assert.deepEqual(summary(listed.Parts), [], 'other bucket upload has no parts');
         });
-      });
+      }));
 
       // Finished uploads have no parts to list; others are unaffected.
-      assertStatus(await client.send(new AbortMultipartUploadCommand({ Bucket, Key: neighbor, UploadId: adjacent })), 204, 'AbortMultipartUpload setup');
-      await assertMissing(() => client.send(new ListPartsCommand({ Bucket, Key: neighbor, UploadId: adjacent })), 'ListParts aborted upload', 'NoSuchUpload');
-      const completed = await client.send(new CompleteMultipartUploadCommand({ Bucket, Key, UploadId: other,
-        MultipartUpload: { Parts: [{ PartNumber: otherPart[0], ETag: otherPart[1] }] } }));
-      assertStatus(completed, 200, 'CompleteMultipartUpload setup');
-      await assertMissing(() => client.send(new ListPartsCommand({ Bucket, Key, UploadId: other })), 'ListParts completed upload', 'NoSuchUpload');
-      await page(Key, id, {}, all);
+      await scenario('aborted upload', async () => {
+        assertStatus(await client.send(new AbortMultipartUploadCommand({ Bucket, Key: neighbor, UploadId: adjacent })), 204, 'AbortMultipartUpload setup');
+        await assertMissing(() => client.send(new ListPartsCommand({ Bucket, Key: neighbor, UploadId: adjacent })), 'ListParts aborted upload', 'NoSuchUpload');
+      });
+      await scenario('completed upload', async () => {
+        const completed = await client.send(new CompleteMultipartUploadCommand({ Bucket, Key, UploadId: other,
+          MultipartUpload: { Parts: [{ PartNumber: otherPart[0], ETag: otherPart[1] }] } }));
+        assertStatus(completed, 200, 'CompleteMultipartUpload setup');
+        await assertMissing(() => client.send(new ListPartsCommand({ Bucket, Key, UploadId: other })), 'ListParts completed upload', 'NoSuchUpload');
+        await page(Key, id, {}, all);
+      });
     });
   });
-  await withBucket(client, async ({ Bucket, retainForUploads }) => {
+  await scenario('missing bucket', () => withBucket(client, async ({ Bucket, retainForUploads }) => {
     await withUploadCleanup(client, Bucket, ['missing'], retainForUploads, async () => {
       assertStatus(await client.send(new DeleteBucketCommand({ Bucket })), 204, 'DeleteBucket setup');
       await assertMissing(() => client.send(new ListPartsCommand({ Bucket, Key: 'missing', UploadId: 'missing' })), 'ListParts missing bucket', MISSING_BUCKET_UPLOAD_CODES);
     });
-  });
+  }));
 }

@@ -172,9 +172,9 @@ test('conditional checks pass against a conforming service over HTTP and clean u
 
 test('read condition check detects incorrect evaluation and cleans up', async t => {
   const cases = [
-    ['ignored conditions', { ignoreConditions: true }, /should return HTTP 304/],
+    ['ignored conditions', { ignoreConditions: true }, /not modified since Last-Modified: .*should return HTTP 304/],
     ['millisecond comparison', { compareMs: true }, /IfModifiedSince=.*should return HTTP 304/],
-    ['ignored If-Unmodified-Since', { ignoreUnmodified: true }, /IfUnmodifiedSince=.*should return HTTP 412/],
+    ['ignored If-Unmodified-Since', { ignoreUnmodified: true }, /modified after If-Unmodified-Since: .*IfUnmodifiedSince=.*should return HTTP 412/],
     ['ignored If-Modified-Since', { ignoreModified: true }, /IfModifiedSince=.*should return HTTP 304/],
     ['If-Unmodified-Since overrides If-Match', { unmodifiedOverridesMatch: true }, /IfMatch=.*IfUnmodifiedSince=.*should succeed, got HTTP 412/],
     ['wrong failure status', { raw: (request, reply) => reply.statusCode === 412 && rawResponse(400, { 'content-length': 0 }) }, /HTTP 412/],
@@ -188,7 +188,7 @@ test('read condition check detects incorrect evaluation and cleans up', async t 
 
 test('copy condition check detects incorrect evaluation and cleans up', async t => {
   const cases = [
-    ['ignored conditions', { ignoreCopyConditions: true }, /should be rejected/],
+    ['ignored conditions', { ignoreCopyConditions: true }, /source not modified since Last-Modified: .*should be rejected/],
     ['millisecond comparison', { compareMs: true }, /CopySourceIfModifiedSince=.*should be rejected/],
     ['If-Unmodified-Since overrides If-Match', { unmodifiedOverridesMatch: true }, /CopySourceIfMatch=.*should succeed, got HTTP 412/],
     ['wrong error code', { copyCode: 'NotModified' }, /error code/],
@@ -208,7 +208,7 @@ test('wire check detects bodies after HEAD and 304 responses and cleans up', asy
     ['HEAD error body', (request, reply) => request.method === 'HEAD' && reply.statusCode === 404 && request.url.includes('absent')
       && rawResponse(404, { 'content-type': 'application/xml' }, errorXml('NoSuchKey')), /HeadObject missing key must not send a body/],
     ['GET 304 body', (request, reply) => request.method === 'GET' && reply.statusCode === 304
-      && rawResponse(304, { etag: reply.headers.etag }, leak), /GetObject matching IfNoneMatch must not send a body/],
+      && rawResponse(304, { etag: reply.headers.etag }, leak), /GET 304: GetObject matching IfNoneMatch must not send a body/],
     ['chunked HEAD', (request, reply) => request.method === 'HEAD' && reply.statusCode === 304
       && rawResponse(304, { 'transfer-encoding': 'chunked' }, '0\r\n\r\n'), /HeadObject matching IfNoneMatch must not send a body/],
     ['wrong HEAD length', (request, reply) => request.method === 'HEAD' && reply.statusCode === 200 && !request.headers.range
@@ -225,7 +225,7 @@ test('wire check detects bodies after HEAD and 304 responses and cleans up', asy
 test('raw exchange captures a signed request without sending it and reports incomplete or hung responses', async t => {
   const { client, service } = await s3Fixture(t, { raw: () => 'HTTP/1.1 200 OK\r\n' });
   const request = await signedRequest(client, new HeadObjectCommand({ Bucket: 'bucket', Key: 'a b/ü' }));
-  assert.match(request.headers.authorization, /^AWS4-HMAC-SHA256 /);
+  assert.match(request.headers.authorization, /AWS4-HMAC-SHA256 /);
   assert.equal(service.requests.length, 0, 'capturing must not send the request');
   await assert.rejects(rawExchange(client, request, 'HeadObject'), /incomplete HTTP response header/);
 

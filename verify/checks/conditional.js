@@ -4,6 +4,7 @@ import { connect as connectTls } from 'node:tls';
 import { CopyObjectCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { boundedRequest } from '../timeouts.js';
 import { assertMissing, assertStatus, cleanupDelete, message, status, withBucket, withCleanup } from './resources.js';
+import { scenario } from '../test-runner.js';
 
 // Conditional requests as documented for GetObject, HeadObject and CopyObject:
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetObject.html
@@ -72,37 +73,39 @@ function describe(conditions) {
   }).join(', ');
 }
 
-// Request conditions for GetObject and HeadObject. `at` is Last-Modified and
-// `before` is a day earlier; `etag` is the current ETag.
+// Request conditions for GetObject and HeadObject, as [conditions, expected
+// status, scenario name]. `at` is Last-Modified and `before` is a day earlier;
+// `etag` is the current ETag.
 export function readConditionCases({ etag, at, before }) {
   return [
-    [{ IfModifiedSince: before }, 200],
-    [{ IfModifiedSince: at }, 304],
-    [{ IfUnmodifiedSince: at }, 200],
-    [{ IfUnmodifiedSince: before }, 412],
+    [{ IfModifiedSince: before }, 200, 'modified since a day earlier'],
+    [{ IfModifiedSince: at }, 304, 'not modified since Last-Modified'],
+    [{ IfUnmodifiedSince: at }, 200, 'unmodified since Last-Modified'],
+    [{ IfUnmodifiedSince: before }, 412, 'modified after If-Unmodified-Since'],
     // Documented: If-Match true and If-Unmodified-Since false returns 200.
-    [{ IfMatch: etag, IfUnmodifiedSince: before }, 200],
+    [{ IfMatch: etag, IfUnmodifiedSince: before }, 200, 'matching If-Match overrides failing If-Unmodified-Since'],
     // A failed If-Match is not overridden by a passing If-Unmodified-Since.
-    [{ IfMatch: NOT_THE_ETAG, IfUnmodifiedSince: at }, 412],
+    [{ IfMatch: NOT_THE_ETAG, IfUnmodifiedSince: at }, 412, 'failing If-Match with passing If-Unmodified-Since'],
     // Documented: If-None-Match false and If-Modified-Since true returns 304.
-    [{ IfNoneMatch: etag, IfModifiedSince: before }, 304],
-    [{ IfMatch: etag, IfModifiedSince: before }, 200],
-    [{ IfNoneMatch: NOT_THE_ETAG, IfUnmodifiedSince: at }, 200],
+    [{ IfNoneMatch: etag, IfModifiedSince: before }, 304, 'failing If-None-Match overrides passing If-Modified-Since'],
+    [{ IfMatch: etag, IfModifiedSince: before }, 200, 'matching If-Match with passing If-Modified-Since'],
+    [{ IfNoneMatch: NOT_THE_ETAG, IfUnmodifiedSince: at }, 200, 'passing If-None-Match with passing If-Unmodified-Since'],
   ];
 }
 
-// Source conditions for CopyObject. A failed condition is always 412.
+// Source conditions for CopyObject, as [conditions, expected status, scenario
+// name]. A failed condition is always 412.
 export function copyConditionCases({ etag, at, before }) {
   return [
-    [{ CopySourceIfModifiedSince: before }, 200],
-    [{ CopySourceIfModifiedSince: at }, 412],
-    [{ CopySourceIfUnmodifiedSince: at }, 200],
-    [{ CopySourceIfUnmodifiedSince: before }, 412],
+    [{ CopySourceIfModifiedSince: before }, 200, 'source modified since a day earlier'],
+    [{ CopySourceIfModifiedSince: at }, 412, 'source not modified since Last-Modified'],
+    [{ CopySourceIfUnmodifiedSince: at }, 200, 'source unmodified since Last-Modified'],
+    [{ CopySourceIfUnmodifiedSince: before }, 412, 'source modified after if-unmodified-since'],
     // Documented: if-match true and if-unmodified-since false copies the object.
-    [{ CopySourceIfMatch: etag, CopySourceIfUnmodifiedSince: before }, 200],
-    [{ CopySourceIfMatch: NOT_THE_ETAG, CopySourceIfUnmodifiedSince: at }, 412],
+    [{ CopySourceIfMatch: etag, CopySourceIfUnmodifiedSince: before }, 200, 'matching if-match overrides failing if-unmodified-since'],
+    [{ CopySourceIfMatch: NOT_THE_ETAG, CopySourceIfUnmodifiedSince: at }, 412, 'failing if-match with passing if-unmodified-since'],
     // Documented: if-none-match false and if-modified-since true returns 412.
-    [{ CopySourceIfNoneMatch: etag, CopySourceIfModifiedSince: before }, 412],
+    [{ CopySourceIfNoneMatch: etag, CopySourceIfModifiedSince: before }, 412, 'failing if-none-match with passing if-modified-since'],
   ];
 }
 
@@ -111,10 +114,12 @@ async function verifyReadConditions(client) {
     const Key = 'conditional/雪 +&%.bin';
     await withObjects(client, Bucket, [Key], async () => {
       const body = Buffer.from([0, 1, 2, 127, 128, 254, 255]);
-      const etag = await putObject(client, Bucket, Key, body);
-      const at = await lastModified(client, Bucket, Key, etag);
-      const before = new Date(at.getTime() - DAY_MS);
-      for (const [conditions, expected] of readConditionCases({ etag, at, before })) {
+      const { etag, at, before } = await scenario('setup', async () => {
+        const etag = await putObject(client, Bucket, Key, body);
+        const at = await lastModified(client, Bucket, Key, etag);
+        return { etag, at, before: new Date(at.getTime() - DAY_MS) };
+      });
+      for (const [conditions, expected, name] of readConditionCases({ etag, at, before })) await scenario(name, async () => {
         for (const [operation, send] of [
           ['GetObject', () => client.send(new GetObjectCommand({ Bucket, Key, ...conditions }))],
           ['HeadObject', () => client.send(new HeadObjectCommand({ Bucket, Key, ...conditions }))],
@@ -134,10 +139,11 @@ async function verifyReadConditions(client) {
             }, `${label} should return HTTP ${expected}`);
           }
         }
-      }
+      });
       // Conditions on a missing key do not hide that it is missing.
-      await assertMissing(() => client.send(new GetObjectCommand({ Bucket, Key: 'absent', IfModifiedSince: before })),
-        'GetObject missing key with IfModifiedSince', 'NoSuchKey');
+      await scenario('missing key', () => assertMissing(
+        () => client.send(new GetObjectCommand({ Bucket, Key: 'absent', IfModifiedSince: before })),
+        'GetObject missing key with IfModifiedSince', 'NoSuchKey'));
     });
   });
 }
@@ -148,16 +154,18 @@ async function verifyCopyConditions(client) {
     const destination = 'destination';
     await withObjects(client, Bucket, [source, destination], async () => {
       const body = Buffer.from('conditional copy source');
-      const etag = await putObject(client, Bucket, source, body);
-      const at = await lastModified(client, Bucket, source, etag);
-      const before = new Date(at.getTime() - DAY_MS);
+      const { etag, at, before } = await scenario('setup', async () => {
+        const etag = await putObject(client, Bucket, source, body);
+        const at = await lastModified(client, Bucket, source, etag);
+        return { etag, at, before: new Date(at.getTime() - DAY_MS) };
+      });
       const sentinel = Buffer.from('destination before conditional copy');
       const destinationContent = async (expected, label) => {
         const response = await client.send(new GetObjectCommand({ Bucket, Key: destination }));
         assertStatus(response, 200, `GetObject ${label}`);
         assert.deepEqual(Buffer.from(await response.Body.transformToByteArray()), expected, `GetObject ${label} content`);
       };
-      for (const [conditions, expected] of copyConditionCases({ etag, at, before })) {
+      for (const [conditions, expected, name] of copyConditionCases({ etag, at, before })) await scenario(name, async () => {
         const label = `CopyObject with ${describe(conditions)}`;
         // Reset the destination so that each outcome is observable.
         await putObject(client, Bucket, destination, sentinel);
@@ -175,7 +183,7 @@ async function verifyCopyConditions(client) {
           }, `${label} should be rejected`);
           await destinationContent(sentinel, `after rejected ${label}`);
         }
-      }
+      });
     });
   });
 }
@@ -276,36 +284,44 @@ async function verifyBodilessResponses(client) {
     const Key = 'wire/雪 +&%.bin';
     await withObjects(client, Bucket, [Key, 'absent'], async () => {
       const body = Buffer.from('content that must not follow a HEAD or 304 response');
-      const etag = await putObject(client, Bucket, Key, body);
+      const etag = await scenario('setup', () => putObject(client, Bucket, Key, body));
       const exchange = async (command, label) => rawExchange(client, await signedRequest(client, command), label);
       const noBody = (result, label) => assert.equal(result.trailing.length, 0,
         `${label} must not send a body, got ${result.trailing.length} bytes: ${JSON.stringify(result.trailing.subarray(0, 64).toString('latin1'))}`);
 
-      const head = await exchange(new HeadObjectCommand({ Bucket, Key }), 'HeadObject');
-      assert.equal(head.status, 200, 'HeadObject HTTP status');
-      assert.equal(head.headers.get('etag'), etag, 'HeadObject ETag');
-      assert.equal(head.headers.get('content-length'), String(body.length), 'HeadObject Content-Length must be the object size');
-      noBody(head, 'HeadObject');
+      await scenario('HEAD 200', async () => {
+        const head = await exchange(new HeadObjectCommand({ Bucket, Key }), 'HeadObject');
+        assert.equal(head.status, 200, 'HeadObject HTTP status');
+        assert.equal(head.headers.get('etag'), etag, 'HeadObject ETag');
+        assert.equal(head.headers.get('content-length'), String(body.length), 'HeadObject Content-Length must be the object size');
+        noBody(head, 'HeadObject');
+      });
 
-      const ranged = await exchange(new HeadObjectCommand({ Bucket, Key, Range: 'bytes=0-4' }), 'HeadObject range');
-      assert.ok([200, 206].includes(ranged.status), 'HeadObject range HTTP status');
-      noBody(ranged, 'HeadObject range');
+      await scenario('HEAD with Range', async () => {
+        const ranged = await exchange(new HeadObjectCommand({ Bucket, Key, Range: 'bytes=0-4' }), 'HeadObject range');
+        assert.ok([200, 206].includes(ranged.status), 'HeadObject range HTTP status');
+        noBody(ranged, 'HeadObject range');
+      });
 
-      for (const [command, expected, label] of [
-        [new HeadObjectCommand({ Bucket, Key: 'absent' }), 404, 'HeadObject missing key'],
-        [new HeadObjectCommand({ Bucket, Key, IfMatch: NOT_THE_ETAG }), 412, 'HeadObject failed IfMatch'],
-        [new HeadObjectCommand({ Bucket, Key, IfNoneMatch: etag }), 304, 'HeadObject matching IfNoneMatch'],
-        [new GetObjectCommand({ Bucket, Key, IfNoneMatch: etag }), 304, 'GetObject matching IfNoneMatch'],
+      for (const [command, expected, label, name] of [
+        [new HeadObjectCommand({ Bucket, Key: 'absent' }), 404, 'HeadObject missing key', 'HEAD 404'],
+        [new HeadObjectCommand({ Bucket, Key, IfMatch: NOT_THE_ETAG }), 412, 'HeadObject failed IfMatch', 'HEAD 412'],
+        [new HeadObjectCommand({ Bucket, Key, IfNoneMatch: etag }), 304, 'HeadObject matching IfNoneMatch', 'HEAD 304'],
+        [new GetObjectCommand({ Bucket, Key, IfNoneMatch: etag }), 304, 'GetObject matching IfNoneMatch', 'GET 304'],
       ]) {
-        const result = await exchange(command, label);
-        assert.equal(result.status, expected, `${label} HTTP status`);
-        noBody(result, label);
+        await scenario(name, async () => {
+          const result = await exchange(command, label);
+          assert.equal(result.status, expected, `${label} HTTP status`);
+          noBody(result, label);
+        });
       }
 
       // A raw GET must return the body, confirming the connection is read correctly.
-      const get = await exchange(new GetObjectCommand({ Bucket, Key }), 'GetObject');
-      assert.equal(get.status, 200, 'GetObject HTTP status');
-      assert.ok(get.trailing.includes(body), 'GetObject over a raw connection must return the content');
+      await scenario('GET 200 over a raw connection', async () => {
+        const get = await exchange(new GetObjectCommand({ Bucket, Key }), 'GetObject');
+        assert.equal(get.status, 200, 'GetObject HTTP status');
+        assert.ok(get.trailing.includes(body), 'GetObject over a raw connection must return the content');
+      });
     });
   });
 }

@@ -168,10 +168,10 @@ All are recorded in design.md. Nothing here is open.
 ## Verifier changes
 
 - [x] **V1.** Add a suite selector, such as `--suite <name>`, to `verify/index.js`. design.md's open question 6 says it is needed. Add it to the usage text and to the unit tests. (`--suite`/`-s` in `verify/suites.js`, repeatable or comma-separated, case-insensitive, run in the usual order: `buckets`, `objects`, `listing`, `multipart`, `cors`, `encryption`. An unknown name exits 1 before any request. `--help` prints the new usage text. Tests in `verify/test/suites.test.js` and `verify/test/infrastructure.test.js`; `pnpm test:unit` now has 229 tests, up from 222.)
-- [ ] **V2.** Split the long checks into named scenarios, so a failure names the case that failed. `conditional.js` (317 lines) is the first candidate, then `cors-behavior.js` and `list-parts.js`.
+- [x] **V2.** Split the long checks into named scenarios, so a failure names the case that failed. `conditional.js` (317 lines) is the first candidate, then `cors-behavior.js` and `list-parts.js`. (`scenario(name, fn)` in `verify/test-runner.js` prefixes a failure with the scenario's name, as in `FAIL ListParts: wrong key: ...`, and `ScenarioError` keeps a missing prerequisite reported as BLOCKED. The three checks are wrapped case by case, each with a `setup` scenario; the check names and count (43) are unchanged. The read and copy condition tables now carry a name per case. Tests in `verify/test/infrastructure.test.js`, and the defect tests for the three checks now match the scenario name. `pnpm test:unit` has 230 tests. On 2026-11-21 a full `verify` run against MicroS3 passed all 43 checks.)
 - [ ] **V3.** Add the bad-signature check (D5): a signed request with a wrong secret, expecting 403 `SignatureDoesNotMatch`. Add it to the unit tests.
 - [ ] **V4.** Before relying on any verifier change, run it against a disposable AWS bucket with explicit permission (`pnpm test --aws`, only where charges are acceptable), as design.md and the todo rule require. V3 is checked against AWS this way too.
-- [ ] After any verifier change, run `pnpm test:unit` (229 tests). These tests use a fixture that shares the verifier's assumptions, so they do not show MicroS3 is compatible.
+- [ ] After any verifier change, run `pnpm test:unit` (230 tests). These tests use a fixture that shares the verifier's assumptions, so they do not show MicroS3 is compatible.
 
 ## Done
 

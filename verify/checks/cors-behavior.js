@@ -11,6 +11,7 @@ import {
   DeleteBucketCorsCommand, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutBucketCorsCommand, PutObjectCommand,
 } from '@aws-sdk/client-s3';
 import { assertStatus, cleanupDelete, message, withBucket, withCleanup } from './resources.js';
+import { scenario } from '../test-runner.js';
 
 const APP = 'https://app.example.com';
 const UPLOADER = 'https://uploader.example.org';
@@ -124,30 +125,43 @@ export default [
       const uploads = ['cors/upload-allowed.txt', 'cors/upload-other.txt'];
       await withObjects(client, Bucket, [key, ...uploads], () => withCors(client, Bucket, async () => {
         const Body = Buffer.from('cors content');
-        assertStatus(await client.send(new PutObjectCommand({ Bucket, Key: key, Body, Metadata: { owner: 'verifier' } })), 200, 'PutObject setup');
-        await putCors(client, Bucket, behaviorRules);
+        await scenario('setup', async () => {
+          assertStatus(await client.send(new PutObjectCommand({ Bucket, Key: key, Body, Metadata: { owner: 'verifier' } })), 200, 'PutObject setup');
+          await putCors(client, Bucket, behaviorRules);
+        });
         const get = origin => withOrigin(client, new GetObjectCommand({ Bucket, Key: key }), origin);
         const head = origin => withOrigin(client, new HeadObjectCommand({ Bucket, Key: key }), origin);
         const put = (Key, origin) => withOrigin(client, new PutObjectCommand({ Bucket, Key, Body }), origin);
 
         // A matching origin and method get CORS headers from the first matching rule.
-        assertActualAllowed(await get(APP), APP, readOnly, `GetObject from ${APP}`);
-        assertActualAllowed(await head('https://images.example.net'), 'https://images.example.net', readOnly, 'HeadObject from https://images.example.net');
-        assertActualAllowed(await get(OTHER), OTHER, publicRead, `GetObject from ${OTHER}`);
-        const allowedPut = await put(uploads[0], UPLOADER);
-        assertStatus(allowedPut.response, 200, `PutObject from ${UPLOADER}`);
-        assertActualAllowed(allowedPut, UPLOADER, write, `PutObject from ${UPLOADER}`);
+        await scenario('GET from an exact origin', async () =>
+          assertActualAllowed(await get(APP), APP, readOnly, `GetObject from ${APP}`));
+        await scenario('HEAD from a wildcard origin', async () =>
+          assertActualAllowed(await head('https://images.example.net'), 'https://images.example.net', readOnly, 'HeadObject from https://images.example.net'));
+        await scenario('GET matching a later * rule', async () =>
+          assertActualAllowed(await get(OTHER), OTHER, publicRead, `GetObject from ${OTHER}`));
+        await scenario('PUT matching the write rule', async () => {
+          const allowedPut = await put(uploads[0], UPLOADER);
+          assertStatus(allowedPut.response, 200, `PutObject from ${UPLOADER}`);
+          assertActualAllowed(allowedPut, UPLOADER, write, `PutObject from ${UPLOADER}`);
+        });
 
         // CORS does not authorize requests: unmatched requests still succeed, without CORS headers.
-        const otherPut = await put(uploads[1], OTHER);
-        assertStatus(otherPut.response, 200, `PutObject from ${OTHER}`);
-        assertActualDenied(otherPut, `PutObject from ${OTHER}`);
-        const unmatched = await head('http://images.example.net');
-        assertStatus(unmatched.response, 200, 'HeadObject from http://images.example.net');
-        assertActualDenied(unmatched, 'HeadObject from http://images.example.net');
-        const plain = await get(undefined);
-        assertStatus(plain.response, 200, 'GetObject without Origin');
-        assertActualDenied(plain, 'GetObject without Origin');
+        await scenario('PUT from an unmatched origin', async () => {
+          const otherPut = await put(uploads[1], OTHER);
+          assertStatus(otherPut.response, 200, `PutObject from ${OTHER}`);
+          assertActualDenied(otherPut, `PutObject from ${OTHER}`);
+        });
+        await scenario('HEAD from an unmatched scheme', async () => {
+          const unmatched = await head('http://images.example.net');
+          assertStatus(unmatched.response, 200, 'HeadObject from http://images.example.net');
+          assertActualDenied(unmatched, 'HeadObject from http://images.example.net');
+        });
+        await scenario('GET without Origin', async () => {
+          const plain = await get(undefined);
+          assertStatus(plain.response, 200, 'GetObject without Origin');
+          assertActualDenied(plain, 'GetObject without Origin');
+        });
       }));
     });
   } },

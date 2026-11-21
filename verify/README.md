@@ -97,7 +97,9 @@ missing configurations and buckets. CORS header checks apply a stored configurat
 A `*` origin rule may answer with `*` or the request origin. Preflight `OPTIONS` requests,
 `Access-Control-Allow-Credentials` and missing buckets are not checked. Encryption checks verify the SSE-S3 default
 configuration on a newly created bucket and the missing-bucket error. Changing
-encryption configuration is outside the planned scope. A connection error stops the run, and any
+encryption configuration is outside the planned scope. The longer checks (conditional requests, CORS headers on
+actual requests, and ListParts) are split into named scenarios, so a failure
+names the case that failed, as in `FAIL ListParts: wrong key: ...`. A connection error stops the run, and any
 connection or check failure gives a nonzero exit status.
 
 Install Node.js 20 or newer and pnpm, then install dependencies and run the program:

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { ListBucketsCommand } from '@aws-sdk/client-s3';
-import { runTests } from '../test-runner.js';
+import { PrerequisiteError, ScenarioError, runTests, scenario } from '../test-runner.js';
 import { runVerification } from '../verification.js';
 
 const verifierDirectory = fileURLToPath(new URL('../', import.meta.url));
@@ -91,6 +91,36 @@ test('runner awaits checks in order, reports failures, and continues', async () 
     '\nSecond:',
     '  PASS pass after failures',
     '\nResults: 2 passed, 2 failed',
+  ]);
+});
+
+test('a failing scenario names its case, and a blocked scenario still blocks its check', async () => {
+  const lines = [];
+  const order = [];
+  const suites = [{ name: 'Scenarios', tests: [
+    { name: 'named failure', async run() {
+      assert.equal(await scenario('first case', () => { order.push('first'); return 1; }), 1);
+      await scenario('second case', async () => { order.push('second'); throw new Error('broken'); });
+      order.push('not reached');
+    } },
+    { name: 'nested', run: () => scenario('outer', () => scenario('inner', () => { throw 'rejected'; })) },
+    { name: 'blocked', run: () => scenario('listing', () => { throw new PrerequisiteError('ListParts', new Error('NotImplemented')); }) },
+    { name: 'blocked with cleanup failure', async run() {
+      const failure = await scenario('listing', () => { throw new PrerequisiteError('ListParts', new Error('NotImplemented')); }).catch(e => e);
+      assert.ok(failure instanceof ScenarioError);
+      assert.equal(failure.scenario, 'listing');
+      throw new AggregateError([failure, new Error('cleanup')], `${failure.message}; cleanup failed`);
+    } },
+  ] }];
+  assert.deepEqual(await runTests(suites, {}, { log: line => lines.push(line) }), { passed: 0, failed: 2, blocked: 2, notRun: 0 });
+  assert.deepEqual(order, ['first', 'second']);
+  assert.deepEqual(lines, [
+    '\nScenarios:',
+    '  FAIL named failure: second case: broken',
+    '  FAIL nested: outer: inner: rejected',
+    '  BLOCKED blocked: listing: prerequisite ListParts failed: NotImplemented',
+    '  BLOCKED blocked with cleanup failure: listing: prerequisite ListParts failed: NotImplemented; cleanup failed',
+    '\nResults: 0 passed, 2 failed, 2 blocked',
   ]);
 });
 

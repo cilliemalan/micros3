@@ -159,7 +159,7 @@ test('ListParts detects incorrect listings, pagination and errors', async () => 
       if (command instanceof ListPartsCommand && matches(command, service)) return ok(200, { IsTruncated: false, Parts: [] });
       return next();
     });
-    await assert.rejects(run({ client }), new RegExp(`ListParts ${mode}`), mode);
+    await assert.rejects(run({ client }), new RegExp(`${mode}: .*ListParts ${mode}`), mode);
     assert.equal(client.buckets.size, 0, mode);
   }
 });

@@ -125,9 +125,9 @@ test('CORS header checks pass against a conforming service over HTTP and clean u
 });
 
 const defects = [
-  ['Vary omitted on actual responses', { noVary: true }, /Vary should include Origin/],
-  ['expose headers omitted on actual responses', { noExpose: true }, /Expose-Headers should list ETag/],
-  ['CORS headers on unmatched actual requests', { corsWhenUnmatched: true }, /should not include Access-Control-Allow-Origin/],
+  ['Vary omitted on actual responses', { noVary: true }, /GET from an exact origin: .*Vary should include Origin/],
+  ['expose headers omitted on actual responses', { noExpose: true }, /GET from an exact origin: .*Expose-Headers should list ETag/],
+  ['CORS headers on unmatched actual requests', { corsWhenUnmatched: true }, /PUT from an unmatched origin: .*should not include Access-Control-Allow-Origin/],
 ];
 
 for (const [description, options, pattern] of defects) {

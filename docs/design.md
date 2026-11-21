@@ -21,7 +21,7 @@ Requests must carry valid SigV4 signatures, and MicroS3 rejects the rest (see Au
 
 ## Verify program analysis
 
-`verify` is a Node.js 20+ program in `verify/`. `verify/index.js` parses options, resolves the target, creates one `S3Client` with path-style addressing and runs the suites in order: buckets, objects, listing, multipart, CORS, encryption. Each check in `verify/checks` is a named `run({ client })` function. The runner reports PASS, FAIL, BLOCKED (a prerequisite request failed) or NOT RUN (run timeout reached).
+`verify` is a Node.js 20+ program in `verify/`. `verify/index.js` parses options, resolves the target, creates one `S3Client` with path-style addressing and runs the suites in order: buckets, objects, listing, multipart, CORS, encryption. Each check in `verify/checks` is a named `run({ client })` function. The runner reports PASS, FAIL, BLOCKED (a prerequisite request failed) or NOT RUN (run timeout reached). Longer checks (`conditional.js`, `cors-behavior.js`, `list-parts.js`) wrap each case in `scenario(name, fn)` from `verify/test-runner.js`, so a failure reads `FAIL <check>: <scenario>: <reason>`; a missing prerequisite inside a scenario still reports BLOCKED.
 
 Before any suite, the runner calls ListBuckets. If that fails, the run stops.
 
@@ -42,7 +42,7 @@ What the checks assert, by area:
 
 Two checks have hard-won details. The multipart checks accept `NoSuchBucket` or `NoSuchUpload` with status 404 when both bucket and upload are missing, because AWS does not document the precedence. Error handling must also cope with S3 returning an error inside an HTTP 200 response, such as EntityTooSmall during CompleteMultipartUpload.
 
-The verifier has offline unit tests (`pnpm test:unit`, 229 tests). They use a SigV4-checking in-memory HTTP fixture (`verify/test/fixtures/s3-http.js`) and run the real SDK against it. The fixture shares the verifier's assumptions, so passing these tests does not show MicroS3 is compatible. The offline suite is a regression test for the verifier, not the emulator.
+The verifier has offline unit tests (`pnpm test:unit`, 230 tests). They use a SigV4-checking in-memory HTTP fixture (`verify/test/fixtures/s3-http.js`) and run the real SDK against it. The fixture shares the verifier's assumptions, so passing these tests does not show MicroS3 is compatible. The offline suite is a regression test for the verifier, not the emulator.
 
 ## Architecture
 
@@ -289,7 +289,7 @@ Emulator-only tests, in addition to `verify`:
 - Crash safety: start a large PutObject, kill the process with SIGKILL during the upload, restart, then confirm the object is absent or complete, and that `staging/` is empty.
 - Static linkage: run `ldd` or `file` on the binary and confirm it is static.
 
-Last, run the verifier's own offline tests (`pnpm test:unit`, 229 tests) to confirm the verifier still works. Those tests do not show the emulator is compatible.
+Last, run the verifier's own offline tests (`pnpm test:unit`, 230 tests) to confirm the verifier still works. Those tests do not show the emulator is compatible.
 
 Before relying on a pass, validate the checks against a disposable AWS bucket with explicit permission, as [todo.md](todo.md) requires. Use `pnpm test --aws` only with an account where charges are acceptable.
 

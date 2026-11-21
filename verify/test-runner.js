@@ -15,10 +15,31 @@ export class PrerequisiteError extends Error {
   }
 }
 
+// A failure inside a named scenario of a longer check (see `scenario`).
+export class ScenarioError extends Error {
+  constructor(name, cause) {
+    super(`${name}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.name = 'ScenarioError';
+    this.scenario = name;
+  }
+}
+
+// Runs one named case of a check, so that a failure names the case. The
+// scenario's own errors keep their meaning: a missing prerequisite inside it
+// still reports the check as blocked.
+export async function scenario(name, run) {
+  try {
+    return await run();
+  } catch (error) {
+    throw new ScenarioError(name, error);
+  }
+}
+
 // Cleanup failures are aggregated after the original failure (see withCleanup).
-function blockedBy(error) {
+export function blockedBy(error) {
   if (error instanceof PrerequisiteError) return error;
-  if (error instanceof AggregateError && error.errors?.[0] instanceof PrerequisiteError) return error.errors[0];
+  if (error instanceof ScenarioError) return blockedBy(error.cause);
+  if (error instanceof AggregateError && error.errors?.length) return blockedBy(error.errors[0]);
   return undefined;
 }
 
