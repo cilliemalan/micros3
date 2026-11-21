@@ -110,18 +110,12 @@ std::optional<Object> find(Store &store, std::string_view bucket, std::string_vi
     return read_object(stmt, bucket, key);
 }
 
-PutResult put(Store &store, const Object &object, std::optional<std::string> &replaced_blob) {
-    replaced_blob.reset();
-    db::Transaction txn(store.db());
-    {
-        db::Statement bucket = store.db().prepare("SELECT 1 FROM buckets WHERE name = ?");
-        bucket.bind_text(1, object.bucket);
-        if (!bucket.step()) return PutResult::NoSuchBucket;
-    }
+std::optional<std::string> upsert(Store &store, const Object &object) {
+    std::optional<std::string> replaced;
     {
         db::Statement old = store.db().prepare("SELECT blob_id FROM objects WHERE bucket = ? AND key = ?");
         old.bind_text(1, object.bucket).bind_blob(2, object.key);
-        if (old.step()) replaced_blob = old.column_text(0);
+        if (old.step()) replaced = old.column_text(0);
     }
     store.db()
         .prepare("INSERT INTO objects (bucket, key, blob_id, size, etag, last_modified_ms, headers) "
@@ -136,8 +130,20 @@ PutResult put(Store &store, const Object &object, std::optional<std::string> &re
         .bind_int(6, object.last_modified_ms)
         .bind_text(7, headers_to_json(object.headers))
         .run();
+    if (replaced == object.blob_id) replaced.reset();
+    return replaced;
+}
+
+PutResult put(Store &store, const Object &object, std::optional<std::string> &replaced_blob) {
+    replaced_blob.reset();
+    db::Transaction txn(store.db());
+    {
+        db::Statement bucket = store.db().prepare("SELECT 1 FROM buckets WHERE name = ?");
+        bucket.bind_text(1, object.bucket);
+        if (!bucket.step()) return PutResult::NoSuchBucket;
+    }
+    replaced_blob = upsert(store, object);
     txn.commit();
-    if (replaced_blob == object.blob_id) replaced_blob.reset();
     return PutResult::Stored;
 }
 

@@ -1107,3 +1107,183 @@ TEST(CorsApi, Errors) {
     // A rejected configuration leaves the stored one in place.
     EXPECT_TRUE(has(body_of(s.send("GET", "/objects?cors")), "<ID>read</ID>"));
 }
+
+// Multipart uploads, end to end over HTTP.
+
+namespace {
+
+// The text of the first <name> element in `xml`, or "<missing>".
+std::string element(const std::string &xml, const std::string &name) {
+    const std::string open = "<" + name + ">";
+    const std::size_t start = xml.find(open);
+    if (start == std::string::npos) return "<missing>";
+    const std::size_t end = xml.find("</" + name + ">", start);
+    return xml.substr(start + open.size(), end - start - open.size());
+}
+
+std::string complete_body(const std::vector<std::pair<int, std::string>> &parts) {
+    std::string body = "<CompleteMultipartUpload xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">";
+    for (const auto &[number, etag] : parts) {
+        body += "<Part><PartNumber>" + std::to_string(number) + "</PartNumber><ETag>" + etag + "</ETag></Part>";
+    }
+    return body + "</CompleteMultipartUpload>";
+}
+
+std::string create_upload(ObjectServer &s, const std::string &target, const micros3::http::Headers &extra = {}) {
+    const std::string response = s.send("POST", target + "?uploads", "", extra);
+    EXPECT_TRUE(status_is(response, "200")) << response;
+    return element(body_of(response), "UploadId");
+}
+
+std::string upload_part(ObjectServer &s, const std::string &target, const std::string &id, int number,
+                        const std::string &body) {
+    const std::string response =
+        s.send("PUT", target + "?partNumber=" + std::to_string(number) + "&uploadId=" + id, body);
+    EXPECT_TRUE(status_is(response, "200")) << response;
+    return header_value(response, "ETag");
+}
+
+} // namespace
+
+TEST(MultipartApi, UploadListAndComplete) {
+    ObjectServer s;
+    const std::string target = "/objects/nested/%E9%9B%AA.bin";
+    std::string response = s.send("POST", target + "?uploads", "",
+                                  {{"content-type", "text/plain"}, {"x-amz-meta-purpose", "multipart"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(element(body_of(response), "Bucket"), "objects");
+    EXPECT_EQ(element(body_of(response), "Key"), "nested/\xE9\x9B\xAA.bin");
+    const std::string id = element(body_of(response), "UploadId");
+    ASSERT_EQ(id.size(), 32u);
+
+    const std::string first(5 * 1024 * 1024, 'Z');
+    EXPECT_EQ(upload_part(s, target, id, 2, "tail"), quoted_md5("tail"));
+    EXPECT_EQ(upload_part(s, target, id, 1, "replaced"), quoted_md5("replaced"));
+    const std::string first_etag = upload_part(s, target, id, 1, first);
+    EXPECT_EQ(first_etag, quoted_md5(first));
+    EXPECT_EQ(upload_part(s, target, id, 3, "small"), quoted_md5("small"));
+    // The replaced part's blob is gone: three parts, three blobs.
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(s.s3.store.blobs_dir()), {}), 3);
+
+    response = s.send("GET", target + "?uploadId=" + id + "&max-parts=2");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(element(body_of(response), "IsTruncated"), "true");
+    EXPECT_EQ(element(body_of(response), "NextPartNumberMarker"), "2");
+    EXPECT_EQ(count(body_of(response), "<Part>"), 2u);
+    response = s.send("GET", target + "?uploadId=" + id + "&part-number-marker=2");
+    EXPECT_EQ(element(body_of(response), "IsTruncated"), "false");
+    EXPECT_EQ(element(body_of(response), "PartNumber"), "3");
+    EXPECT_EQ(element(body_of(response), "Size"), "5");
+
+    response = s.send("GET", "/objects?uploads");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(element(body_of(response), "UploadId"), id);
+    EXPECT_EQ(element(body_of(response), "StorageClass"), "STANDARD");
+
+    // Failed completions leave the upload as it was.
+    const std::string tail_etag = quoted_md5("tail");
+    for (const auto &[parts, code] : std::vector<std::pair<std::vector<std::pair<int, std::string>>, std::string>>{
+             {{{2, tail_etag}, {1, first_etag}}, "InvalidPartOrder"},
+             {{{1, first_etag}, {2, "\"0123\""}}, "InvalidPart"},
+             {{{1, first_etag}, {4, tail_etag}}, "InvalidPart"},
+             {{{2, tail_etag}, {3, quoted_md5("small")}}, "EntityTooSmall"},
+             {{}, "MalformedXML"}}) {
+        response = s.send("POST", target + "?uploadId=" + id, complete_body(parts));
+        EXPECT_TRUE(status_is(response, "400")) << code << "\n" << response;
+        EXPECT_TRUE(has(body_of(response), "<Code>" + code + "</Code>")) << code << "\n" << response;
+    }
+    response = s.send("POST", target + "?uploadId=" + id, complete_body({{1, first_etag}}),
+                      {{"if-none-match", "*"}});
+    EXPECT_TRUE(status_is(response, "501")) << response;
+
+    // Unquoted ETags match too.
+    response = s.send("POST", target + "?uploadId=" + id,
+                      complete_body({{1, first_etag}, {2, tail_etag.substr(1, 32)}}));
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    // md5(md5(first) + md5("tail")), computed independently.
+    const std::string etag = "\"c463e174662fca2243006bd772883fe7-2\"";
+    EXPECT_EQ(element(body_of(response), "ETag"), "&quot;c463e174662fca2243006bd772883fe7-2&quot;") << response;
+    EXPECT_EQ(element(body_of(response), "Key"), "nested/\xE9\x9B\xAA.bin");
+
+    response = s.send("GET", target);
+    ASSERT_TRUE(status_is(response, "200")) << response.substr(0, 500);
+    EXPECT_TRUE(body_of(response) == first + "tail");
+    EXPECT_EQ(header_value(response, "ETag"), etag);
+    EXPECT_EQ(header_value(response, "Content-Type"), "text/plain");
+    EXPECT_EQ(header_value(response, "x-amz-meta-purpose"), "multipart");
+    // Only the object's blob remains; the unused part 3 went with the upload.
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(s.s3.store.blobs_dir()), {}), 1);
+
+    // The upload is finished.
+    for (const auto &[method, suffix, body] : std::vector<std::tuple<std::string, std::string, std::string>>{
+             {"GET", "?uploadId=" + id, ""},
+             {"PUT", "?partNumber=1&uploadId=" + id, "x"},
+             {"POST", "?uploadId=" + id, complete_body({{1, first_etag}})},
+             {"DELETE", "?uploadId=" + id, ""}}) {
+        response = s.send(method, target + suffix, body);
+        EXPECT_TRUE(status_is(response, "404")) << method << "\n" << response;
+        EXPECT_TRUE(has(body_of(response), "<Code>NoSuchUpload</Code>")) << method << "\n" << response;
+    }
+    response = s.send("GET", "/objects?uploads");
+    EXPECT_EQ(element(body_of(response), "UploadId"), "<missing>");
+}
+
+TEST(MultipartApi, AbortAndErrors) {
+    ObjectServer s;
+    const std::string id = create_upload(s, "/objects/key");
+    upload_part(s, "/objects/key", id, 1, "part");
+    // Upload IDs are scoped to their key.
+    std::string response = s.send("DELETE", "/objects/other?uploadId=" + id);
+    EXPECT_TRUE(status_is(response, "404")) << response;
+    response = s.send("DELETE", "/objects/key?uploadId=" + id);
+    EXPECT_TRUE(status_is(response, "204")) << response;
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.blobs_dir()));
+
+    for (const std::string number : {"0", "10001", "x", ""}) {
+        response = s.send("PUT", "/objects/key?partNumber=" + number + "&uploadId=" + id, "x");
+        EXPECT_TRUE(status_is(response, "400")) << number << "\n" << response;
+        EXPECT_TRUE(has(body_of(response), "<Code>InvalidArgument</Code>")) << number << "\n" << response;
+    }
+
+    response = s.send("POST", "/missing/key?uploads");
+    EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << response;
+    response = s.send("GET", "/missing?uploads");
+    EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << response;
+    response = s.send("PUT", "/missing/key?partNumber=1&uploadId=" + id, "x");
+    EXPECT_TRUE(has(body_of(response), "<Code>NoSuchBucket</Code>")) << response;
+
+    // DeleteBucket takes a bucket's uploads with it (D1).
+    const std::string other = create_upload(s, "/objects/key");
+    upload_part(s, "/objects/key", other, 1, "part");
+    EXPECT_TRUE(status_is(s.send("DELETE", "/objects"), "204"));
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.blobs_dir()));
+}
+
+TEST(MultipartApi, ListUploadsWithDelimiterAndMarkers) {
+    ObjectServer s;
+    std::vector<std::string> ids;
+    for (const char *key : {"alpha/one", "alpha/sub/a", "alpha/two"}) ids.push_back(create_upload(s, "/objects/" + std::string(key)));
+    std::string response = s.send("GET", "/objects?uploads&prefix=alpha/&delimiter=/&max-uploads=2");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    std::string body = body_of(response);
+    EXPECT_EQ(element(body, "IsTruncated"), "true");
+    EXPECT_EQ(element(body, "MaxUploads"), "2");
+    EXPECT_EQ(element(body, "Prefix"), "alpha/");
+    EXPECT_EQ(element(body, "Delimiter"), "/");
+    EXPECT_EQ(element(body, "NextKeyMarker"), "alpha/sub/");
+    EXPECT_EQ(element(body, "NextUploadIdMarker"), "<missing>");
+    EXPECT_TRUE(has(body, "<CommonPrefixes><Prefix>alpha/sub/</Prefix></CommonPrefixes>")) << body;
+
+    response = s.send("GET", "/objects?uploads&max-uploads=1&key-marker=alpha/one&upload-id-marker=" + ids[0]);
+    body = body_of(response);
+    EXPECT_EQ(element(body, "Key"), "alpha/sub/a");
+    EXPECT_EQ(element(body, "NextKeyMarker"), "alpha/sub/a");
+    EXPECT_EQ(element(body, "NextUploadIdMarker"), ids[1]);
+
+    response = s.send("GET", "/objects?uploads&encoding-type=url&prefix=alpha%2Fsub%2F");
+    body = body_of(response);
+    EXPECT_EQ(element(body, "EncodingType"), "url");
+    EXPECT_EQ(element(body, "Key"), "alpha/sub/a");
+    EXPECT_TRUE(status_is(s.send("GET", "/objects?uploads&encoding-type=xml"), "400"));
+    EXPECT_TRUE(status_is(s.send("GET", "/objects?uploads&max-uploads=-1"), "400"));
+}

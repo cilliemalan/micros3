@@ -13,13 +13,16 @@ add_library(libmicros3 STATIC
     http.cpp
     list_handlers.cpp
     listing.cpp
+    multipart_handlers.cpp
     object_handlers.cpp
     objects.cpp
     router.cpp
     server.cpp
     service.cpp
     sigv4.cpp
+    staged_body.cpp
     store.cpp
+    uploads.cpp
     url.cpp
     xml.cpp
 )

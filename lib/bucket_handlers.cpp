@@ -18,10 +18,6 @@ namespace micros3::handlers {
 
 namespace {
 
-// The one owner every bucket has.
-constexpr std::string_view kOwnerId = "75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a";
-constexpr std::string_view kOwnerName = "micros3";
-
 // ListBuckets returns at most this many buckets per page.
 constexpr std::int64_t kMaxBuckets = 10000;
 

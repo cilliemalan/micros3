@@ -93,6 +93,15 @@ std::unique_ptr<http::Exchange> begin(Store &store, const http::Request &request
         return buffered([](Store &s, const http::Request &q, const router::Route &r, const std::string &body) {
             return delete_objects(s, q, r, body);
         });
+    case Operation::CreateMultipartUpload: return ignoring_body(&create_multipart_upload);
+    case Operation::UploadPart: return upload_part(store, request, route);
+    case Operation::ListParts: return ignoring_body(&list_parts);
+    case Operation::ListMultipartUploads: return ignoring_body(&list_multipart_uploads);
+    case Operation::CompleteMultipartUpload:
+        return buffered([](Store &s, const http::Request &q, const router::Route &r, const std::string &body) {
+            return complete_multipart_upload(s, q, r, body);
+        });
+    case Operation::AbortMultipartUpload: return ignoring_body(&abort_multipart_upload);
     default: return nullptr;
     }
 }

@@ -21,12 +21,12 @@ It is meant to implement these operations with basic support:
   - [x] ListObjects
   - [x] ListObjectsV2
 - Multipart:
-  - [ ] CreateMultipartUpload
-  - [ ] UploadPart
-  - [ ] CompleteMultipartUpload
-  - [ ] AbortMultipartUpload
-  - [ ] ListMultipartUploads
-  - [ ] ListParts
+  - [x] CreateMultipartUpload
+  - [x] UploadPart
+  - [x] CompleteMultipartUpload
+  - [x] AbortMultipartUpload
+  - [x] ListMultipartUploads
+  - [x] ListParts
 - CORS:
   - [x] PutBucketCors
   - [x] GetBucketCors

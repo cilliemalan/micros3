@@ -114,17 +114,17 @@ All are recorded in design.md. Nothing here is open.
 
 ## Phase 8: Multipart
 
-- [ ] CreateMultipartUpload: `InitiateMultipartUploadResult`, with a random hex `UploadId`. Store the request's metadata headers for use at completion.
-- [ ] UploadPart: `partNumber` 1 to 10,000, else `InvalidArgument` (400). Stream to `staging/`, with Content-MD5 validation as for PutObject. A part number that already exists replaces it. Unknown upload returns `NoSuchUpload` (404). Precedence: when the bucket is also missing, return `NoSuchBucket` or `NoSuchUpload`, which the checks accept.
-- [ ] Commit a part as for objects, then upsert the `parts` row and delete the replaced part blob. A part whose upload was deleted with its bucket (D1) fails at this commit with `NoSuchUpload`.
-- [ ] ListParts: `part-number-marker`, `max-parts`, `IsTruncated`, `NextPartNumberMarker`. Unknown upload returns `NoSuchUpload`.
-- [ ] ListMultipartUploads: honor `max-uploads` (Floci ignores it). Return `IsTruncated`, `NextKeyMarker`, `NextUploadIdMarker`, `key-marker`, `upload-id-marker`, `prefix`, and `CommonPrefixes` when a delimiter is given. Order by key in byte order.
-- [ ] CompleteMultipartUpload: parse the body's `Part` list. Parts out of order return `InvalidPartOrder`. A missing part or a mismatched ETag returns `InvalidPart`. An undersized non-final part (under 5 MiB) returns `EntityTooSmall`. All are 400, so the status is correct even though the verifier also handles errors inside a 200. `If-None-Match` returns 501 (D7).
-- [ ] Assemble the object in `staging/`, `fsync` it and `rename` it into `blobs/`. In one transaction, insert the `objects` row and delete the upload and part rows. Then delete the part blobs and any replaced object blob.
-- [ ] Multipart ETag: MD5 of the concatenated binary part MD5s, followed by `-<part count>` (a design choice, not verified).
-- [ ] AbortMultipartUpload: 204. Deletes the upload's parts and blobs. Unknown upload returns `NoSuchUpload`. Check `abort-multipart-upload.js` and `complete-multipart-upload.js` for how a repeated call after success or abort is expected to behave.
+- [x] CreateMultipartUpload: `InitiateMultipartUploadResult`, with a random hex `UploadId`. Store the request's metadata headers for use at completion. (`create_multipart_upload` in `lib/multipart_handlers.cpp`; rows in `lib/uploads.cpp`. The ID is 12 hex digits of the initiation time then 20 random ones, so one key's uploads list in initiation order. `x-amz-checksum-algorithm` answers 501.)
+- [x] UploadPart: `partNumber` 1 to 10,000, else `InvalidArgument` (400). Stream to `staging/`, with Content-MD5 validation as for PutObject. A part number that already exists replaces it. Unknown upload returns `NoSuchUpload` (404). Precedence: when the bucket is also missing, return `NoSuchBucket` or `NoSuchUpload`, which the checks accept. (NoSuchBucket. PutObject and UploadPart share `StagedBodyExchange` in `lib/staged_body.cpp`, with the CRC32 and SHA-256 checksums too.)
+- [x] Commit a part as for objects, then upsert the `parts` row and delete the replaced part blob. A part whose upload was deleted with its bucket (D1) fails at this commit with `NoSuchUpload`.
+- [x] ListParts: `part-number-marker`, `max-parts`, `IsTruncated`, `NextPartNumberMarker`. Unknown upload returns `NoSuchUpload`.
+- [x] ListMultipartUploads: honor `max-uploads` (Floci ignores it). Return `IsTruncated`, `NextKeyMarker`, `NextUploadIdMarker`, `key-marker`, `upload-id-marker`, `prefix`, and `CommonPrefixes` when a delimiter is given. Order by key in byte order. (Then by upload ID. A truncated page that ends in a common prefix gives the prefix as `NextKeyMarker` and no `NextUploadIdMarker`. `encoding-type=url` encodes keys, prefixes and markers.)
+- [x] CompleteMultipartUpload: parse the body's `Part` list. Parts out of order return `InvalidPartOrder`. A missing part or a mismatched ETag returns `InvalidPart`. An undersized non-final part (under 5 MiB) returns `EntityTooSmall`. All are 400, so the status is correct even though the verifier also handles errors inside a 200. `If-None-Match` returns 501 (D7). (As does `If-Match`. ETags match with or without quotes. An empty part list is `MalformedXML`. Order is checked first, then each part, then sizes. Assembly copies the parts on the event loop, as CopyObject does.)
+- [x] Assemble the object in `staging/`, `fsync` it and `rename` it into `blobs/`. In one transaction, insert the `objects` row and delete the upload and part rows. Then delete the part blobs and any replaced object blob.
+- [x] Multipart ETag: MD5 of the concatenated binary part MD5s, followed by `-<part count>` (a design choice, not verified).
+- [x] AbortMultipartUpload: 204. Deletes the upload's parts and blobs. Unknown upload returns `NoSuchUpload`. Check `abort-multipart-upload.js` and `complete-multipart-upload.js` for how a repeated call after success or abort is expected to behave. (Both accept `NoSuchUpload` (404) for a repeat, which is what MicroS3 answers.)
 
-**Checks:** `create-multipart-upload.js`, `upload-part.js`, `list-parts.js`, `list-multipart-uploads.js`, `complete-multipart-upload.js`, `abort-multipart-upload.js`, `multipart-cleanup.js`.
+**Checks:** `create-multipart-upload.js`, `upload-part.js`, `list-parts.js`, `list-multipart-uploads.js`, `complete-multipart-upload.js`, `abort-multipart-upload.js`, `multipart-cleanup.js`. (On 2026-11-21, all six multipart checks passed. Tests in `test/uploads_test.cpp` and `test/server_test.cpp`.)
 
 ## Phase 9: Conditional requests
 
@@ -134,7 +134,7 @@ All are recorded in design.md. Nothing here is open.
 - [x] Compare dates at one-second resolution, using the stored `Last-Modified`.
 - [x] HEAD and 304 responses have no body on the wire, even on a raw socket.
 - [x] CopyObject: `x-amz-copy-source-if-*` headers. A failed condition returns 412 `PreconditionFailed`. (Through `conditions::evaluate`, with both failure outcomes mapped to 412.)
-- [ ] Conditional writes (D7): `If-None-Match` on PutObject or CompleteMultipartUpload returns 501 `NotImplemented`. (Done for PutObject, which also answers `If-Match` with 501. CompleteMultipartUpload remains, in Phase 8.)
+- [x] Conditional writes (D7): `If-None-Match` on PutObject or CompleteMultipartUpload returns 501 `NotImplemented`. (Both also answer `If-Match` with 501.)
 
 **Checks:** `conditional.js`, with `integrity.js` for the body rules.
 
@@ -157,7 +157,7 @@ All are recorded in design.md. Nothing here is open.
 
 ## Emulator tests
 
-- [ ] Replace `test/hello_test.cpp` with store tests: UTF-8 byte order for listings, continuation token encoding, single-part and multipart ETags, XML escaping, the BadDigest and InvalidDigest rules, bucket-name validation, and Range parsing and 206/416 results. (`hello_test.cpp` is gone. Single-part ETags, BadDigest and InvalidDigest, Range and 206/416 are in `test/server_test.cpp` and `test/conditions_test.cpp`; XML escaping and bucket names have their own tests. Listing order and pagination are in `test/listing_test.cpp`, and continuation tokens and URL encoding in `test/server_test.cpp`. Multipart ETags remain.)
+- [x] Replace `test/hello_test.cpp` with store tests: UTF-8 byte order for listings, continuation token encoding, single-part and multipart ETags, XML escaping, the BadDigest and InvalidDigest rules, bucket-name validation, and Range parsing and 206/416 results. (`hello_test.cpp` is gone. Single-part ETags, BadDigest and InvalidDigest, Range and 206/416 are in `test/server_test.cpp` and `test/conditions_test.cpp`; XML escaping and bucket names have their own tests. Listing order and pagination are in `test/listing_test.cpp`, and continuation tokens and URL encoding in `test/server_test.cpp`. Multipart ETags are in `test/uploads_test.cpp` and `test/server_test.cpp`.)
 - [x] SigV4 signing against AWS's published test vectors (Phase 1). (The S3 GET, PUT, lifecycle and list examples, the derived-key example, and `get-vanilla`.)
 - [x] MD5, SHA-256, CRC32 and base64 results checked against known vectors, to confirm the wiring to the libraries. (`test/digest_test.cpp`, which also checks HMAC-SHA256 against RFC 4231.)
 - [x] Persistence script (`test/persistence.sh`): create a bucket and an object, stop, restart on the same data directory, read the object back. (`test/persistence.sh [binary]`, with helpers in `test/lib-server.sh`. Needs curl 7.75+.)

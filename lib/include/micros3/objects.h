@@ -51,6 +51,11 @@ http::Headers headers_from_json(std::string_view json);
 // The object at `key`, or nullopt.
 std::optional<Object> find(Store &store, std::string_view bucket, std::string_view key);
 
+// Upserts the object row, inside a transaction the caller holds, in a bucket
+// that exists. Returns the blob id of the row it replaced, if any; the caller
+// deletes that file after the commit.
+std::optional<std::string> upsert(Store &store, const Object &object);
+
 enum class PutResult { Stored, NoSuchBucket };
 
 // Upserts the object row in one transaction. When it replaces a row, the old

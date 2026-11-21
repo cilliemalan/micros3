@@ -14,9 +14,6 @@ namespace micros3::handlers {
 
 namespace {
 
-constexpr std::string_view kOwnerId = "75aa57f09aa0c8caeab4f8c24e99d10f8e7faeebf76c078efc7c6caea54ba06a";
-constexpr std::string_view kOwnerName = "micros3";
-
 std::optional<S3Error> parse_max_keys(const url::Query &query, std::size_t &out) {
     const auto value = query.get("max-keys");
     if (!value) return std::nullopt;
