@@ -1,6 +1,6 @@
 # MicroS3
 
-MicroS3 is a microminimal S3 emulator. It is a single executable that serves
+MicroS3 is a microminimal S3 emulator. It is a single <3MB executable that serves
 the S3 REST API over plain HTTP. See [lib/README.md](lib/README.md) for the
 supported operations and [docs/design.md](docs/design.md) for the design.
 
