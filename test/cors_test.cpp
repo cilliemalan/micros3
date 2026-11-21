@@ -122,3 +122,105 @@ TEST(CorsStore, SaveLoadAndRemove) {
     ASSERT_TRUE(cors::save(store, "bucket", std::nullopt));
     EXPECT_FALSE(cors::load(store, "bucket").config);
 }
+
+// Matching requests against rules.
+
+namespace {
+
+cors::Configuration behavior_rules() {
+    cors::Rule read;
+    read.id = "read";
+    read.allowed_origins = {"https://app.example.com", "https://*.example.net"};
+    read.allowed_methods = {"GET", "HEAD"};
+    read.allowed_headers = {"authorization", "x-custom-*"};
+    read.expose_headers = {"ETag"};
+    read.max_age_seconds = 100;
+    cors::Rule write;
+    write.id = "write";
+    write.allowed_origins = {"https://app.example.com"};
+    write.allowed_methods = {"GET", "PUT"};
+    write.allowed_headers = {"*"};
+    cors::Rule any;
+    any.id = "any";
+    any.allowed_origins = {"*"};
+    any.allowed_methods = {"GET"};
+    return {read, write, any};
+}
+
+std::string matched_id(const cors::Rule *rule) { return rule ? rule->id.value_or("") : "<none>"; }
+
+} // namespace
+
+TEST(CorsMatch, Wildcards) {
+    EXPECT_TRUE(cors::wildcard_match("*", "", false));
+    EXPECT_TRUE(cors::wildcard_match("*", "anything", false));
+    EXPECT_TRUE(cors::wildcard_match("https://*.example.net", "https://a.b.example.net", false));
+    EXPECT_FALSE(cors::wildcard_match("https://*.example.net", "http://a.example.net", false));
+    EXPECT_FALSE(cors::wildcard_match("https://*.example.net", "https://example.net", false));
+    EXPECT_FALSE(cors::wildcard_match("ab*ba", "aba", false));
+    EXPECT_TRUE(cors::wildcard_match("ab*ba", "abba", false));
+    EXPECT_TRUE(cors::wildcard_match("x-custom-*", "X-Custom-Thing", true));
+    EXPECT_FALSE(cors::wildcard_match("x-custom-*", "X-Custom-Thing", false));
+    EXPECT_TRUE(cors::wildcard_match("exact", "exact", false));
+    EXPECT_FALSE(cors::wildcard_match("exact", "exact2", false));
+}
+
+TEST(CorsMatch, ActualRequestsUseFirstMatchingRule) {
+    const cors::Configuration config = behavior_rules();
+    EXPECT_EQ(matched_id(cors::match_request(config, "https://app.example.com", "GET")), "read");
+    EXPECT_EQ(matched_id(cors::match_request(config, "https://img.example.net", "HEAD")), "read");
+    EXPECT_EQ(matched_id(cors::match_request(config, "https://app.example.com", "PUT")), "write");
+    EXPECT_EQ(matched_id(cors::match_request(config, "https://other.example", "GET")), "any");
+    EXPECT_EQ(matched_id(cors::match_request(config, "https://other.example", "PUT")), "<none>");
+    EXPECT_EQ(matched_id(cors::match_request(config, "http://img.example.net", "HEAD")), "<none>");
+    // Methods are case-sensitive.
+    EXPECT_EQ(matched_id(cors::match_request(config, "https://app.example.com", "get")), "<none>");
+}
+
+TEST(CorsMatch, PreflightChecksRequestedHeaders) {
+    const cors::Configuration config = behavior_rules();
+    auto match = cors::match_preflight(config, "https://app.example.com", "GET", "");
+    ASSERT_TRUE(match);
+    EXPECT_EQ(matched_id(match->rule), "read");
+    EXPECT_TRUE(match->headers.empty());
+
+    match = cors::match_preflight(config, "https://app.example.com", "GET", " Authorization ,X-Custom-A,x-custom-a");
+    ASSERT_TRUE(match);
+    EXPECT_EQ(matched_id(match->rule), "read");
+    EXPECT_EQ(match->headers, (std::vector<std::string>{"authorization", "x-custom-a"}));
+
+    // A header the first rule does not allow falls through to the `*` rule.
+    match = cors::match_preflight(config, "https://app.example.com", "GET", "authorization, content-type");
+    ASSERT_TRUE(match);
+    EXPECT_EQ(matched_id(match->rule), "write");
+    EXPECT_EQ(match->headers, (std::vector<std::string>{"authorization", "content-type"}));
+
+    // The `any` rule allows no headers.
+    EXPECT_TRUE(cors::match_preflight(config, "https://other.example", "GET", ""));
+    EXPECT_FALSE(cors::match_preflight(config, "https://other.example", "GET", "x-custom-a"));
+    EXPECT_FALSE(cors::match_preflight(config, "https://other.example", "DELETE", ""));
+}
+
+TEST(CorsMatch, ResponseHeaders) {
+    const cors::Configuration config = behavior_rules();
+    micros3::http::Response response;
+    cors::add_headers(response, config[0], "https://img.example.net", {"authorization"});
+    const micros3::http::Headers expected = {{"Access-Control-Allow-Origin", "https://img.example.net"},
+                                             {"Access-Control-Allow-Credentials", "true"},
+                                             {"Access-Control-Allow-Methods", "GET, HEAD"},
+                                             {"Access-Control-Allow-Headers", "authorization"},
+                                             {"Access-Control-Expose-Headers", "ETag"},
+                                             {"Access-Control-Max-Age", "100"}};
+    EXPECT_EQ(response.headers, expected);
+
+    micros3::http::Response any;
+    cors::add_headers(any, config[2], "https://other.example");
+    EXPECT_EQ(any.headers, (micros3::http::Headers{{"Access-Control-Allow-Origin", "*"},
+                                                   {"Access-Control-Allow-Methods", "GET"}}));
+
+    cors::add_vary(any, "Origin");
+    any.set_header("x", "y");
+    cors::add_vary(any, "Accept");
+    EXPECT_EQ(any.headers.back().first, "x");
+    EXPECT_EQ(any.headers[2], (std::pair<std::string, std::string>{"Vary", "Origin, Accept"}));
+}

@@ -309,8 +309,10 @@ TEST(S3Service, PreflightNeedsNoSignature) {
                                                          "Origin: https://example.com\r\n"
                                                          "Access-Control-Request-Method: GET\r\n"
                                                          "Connection: close\r\n\r\n");
+    // Not AccessDenied: the preflight is checked against CORS rules, and this
+    // bucket does not exist.
     EXPECT_EQ(response.find("AccessDenied"), std::string::npos) << response;
-    EXPECT_EQ(response.rfind("HTTP/1.1 403", 0), std::string::npos) << response;
+    EXPECT_NE(response.find("<Code>AccessForbidden</Code>"), std::string::npos) << response;
 }
 
 TEST(S3Service, BodyNotMatchingPayloadHashIsRejected) {
@@ -1106,6 +1108,169 @@ TEST(CorsApi, Errors) {
     EXPECT_TRUE(has(body_of(response), "<Code>BadDigest</Code>")) << response;
     // A rejected configuration leaves the stored one in place.
     EXPECT_TRUE(has(body_of(s.send("GET", "/objects?cors")), "<ID>read</ID>"));
+}
+
+namespace {
+
+const std::string kBehaviorRules =
+    "<CORSConfiguration>"
+    "<CORSRule><ID>read</ID><AllowedOrigin>https://app.example.com</AllowedOrigin>"
+    "<AllowedOrigin>https://*.example.net</AllowedOrigin><AllowedMethod>GET</AllowedMethod>"
+    "<AllowedMethod>HEAD</AllowedMethod><AllowedHeader>authorization</AllowedHeader>"
+    "<AllowedHeader>x-custom-*</AllowedHeader><ExposeHeader>ETag</ExposeHeader>"
+    "<ExposeHeader>x-amz-meta-owner</ExposeHeader><MaxAgeSeconds>100</MaxAgeSeconds></CORSRule>"
+    "<CORSRule><ID>write</ID><AllowedOrigin>https://app.example.com</AllowedOrigin>"
+    "<AllowedOrigin>https://uploader.example.org</AllowedOrigin><AllowedMethod>GET</AllowedMethod>"
+    "<AllowedMethod>PUT</AllowedMethod><AllowedMethod>DELETE</AllowedMethod><AllowedHeader>*</AllowedHeader>"
+    "<ExposeHeader>x-amz-request-id</ExposeHeader><MaxAgeSeconds>200</MaxAgeSeconds></CORSRule>"
+    "<CORSRule><ID>public-read</ID><AllowedOrigin>*</AllowedOrigin><AllowedMethod>GET</AllowedMethod>"
+    "<MaxAgeSeconds>300</MaxAgeSeconds></CORSRule>"
+    "</CORSConfiguration>";
+
+// An unsigned preflight request.
+std::string preflight_request(const std::string &target, const micros3::http::Headers &headers) {
+    std::string text = "OPTIONS " + target + " HTTP/1.1\r\nHost: localhost\r\n";
+    for (const auto &[name, value] : headers) text += name + ": " + value + "\r\n";
+    return text + "Connection: close\r\n\r\n";
+}
+
+bool has_cors_headers(const std::string &response) {
+    return header_value(response, "Access-Control-Allow-Origin") != "<missing>" ||
+           header_value(response, "Access-Control-Allow-Methods") != "<missing>" ||
+           header_value(response, "Access-Control-Expose-Headers") != "<missing>";
+}
+
+} // namespace
+
+TEST(CorsBehavior, Preflight) {
+    ObjectServer s;
+    const auto preflight = [&s](const std::string &target, const micros3::http::Headers &headers) {
+        return exchange(s.server.port(), preflight_request(target, headers));
+    };
+    const micros3::http::Headers app_get = {{"Origin", "https://app.example.com"},
+                                            {"Access-Control-Request-Method", "GET"}};
+
+    // No configuration, or no bucket: 403 with no CORS headers.
+    std::string response = preflight("/objects/key", app_get);
+    EXPECT_TRUE(status_is(response, "403")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>AccessForbidden</Code>")) << response;
+    EXPECT_FALSE(has_cors_headers(response)) << response;
+    response = preflight("/missing/key", app_get);
+    EXPECT_TRUE(status_is(response, "403")) << response;
+    EXPECT_FALSE(has_cors_headers(response)) << response;
+
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects?cors", kBehaviorRules), "200"));
+
+    // Bucket and object paths, matched by the first rule.
+    for (const std::string target : {"/objects", "/objects/", "/objects/some/key?uploads"}) {
+        response = preflight(target, app_get);
+        ASSERT_TRUE(status_is(response, "200")) << target << "\n" << response;
+        EXPECT_EQ(header_value(response, "Access-Control-Allow-Origin"), "https://app.example.com");
+        EXPECT_EQ(header_value(response, "Access-Control-Allow-Methods"), "GET, HEAD");
+        EXPECT_EQ(header_value(response, "Access-Control-Max-Age"), "100");
+        EXPECT_EQ(header_value(response, "Access-Control-Expose-Headers"), "ETag, x-amz-meta-owner");
+        EXPECT_EQ(header_value(response, "Access-Control-Allow-Headers"), "<missing>");
+        EXPECT_TRUE(has(header_value(response, "Vary"), "Origin")) << response;
+        EXPECT_EQ(body_of(response), "");
+    }
+
+    // Requested headers: only those asked for are listed.
+    response = preflight("/objects/key", {{"Origin", "https://images.example.net"},
+                                          {"Access-Control-Request-Method", "HEAD"},
+                                          {"Access-Control-Request-Headers", "Authorization, X-Custom-Trace"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "Access-Control-Allow-Origin"), "https://images.example.net");
+    EXPECT_EQ(header_value(response, "Access-Control-Allow-Headers"), "authorization, x-custom-trace");
+
+    // A header the first rule does not allow is matched by `*` in the second.
+    response = preflight("/objects/key", {{"Origin", "https://app.example.com"},
+                                          {"Access-Control-Request-Method", "GET"},
+                                          {"Access-Control-Request-Headers", "content-type,x-amz-date"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "Access-Control-Max-Age"), "200");
+    EXPECT_EQ(header_value(response, "Access-Control-Allow-Headers"), "content-type, x-amz-date");
+    EXPECT_EQ(header_value(response, "Access-Control-Allow-Methods"), "GET, PUT, DELETE");
+
+    // Any origin: answered with `*`.
+    response = preflight("/objects/key", {{"Origin", "https://other.example"},
+                                          {"Access-Control-Request-Method", "GET"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "Access-Control-Allow-Origin"), "*");
+    EXPECT_EQ(header_value(response, "Access-Control-Max-Age"), "300");
+
+    // Rejected: wrong scheme, method or header.
+    for (const micros3::http::Headers &headers : std::vector<micros3::http::Headers>{
+             {{"Origin", "http://images.example.net"}, {"Access-Control-Request-Method", "HEAD"}},
+             {{"Origin", "https://other.example"}, {"Access-Control-Request-Method", "PUT"}},
+             {{"Origin", "https://other.example"},
+              {"Access-Control-Request-Method", "GET"},
+              {"Access-Control-Request-Headers", "x-custom-a"}}}) {
+        response = preflight("/objects/key", headers);
+        EXPECT_TRUE(status_is(response, "403")) << response;
+        EXPECT_TRUE(has(body_of(response), "<Code>AccessForbidden</Code>")) << response;
+        EXPECT_FALSE(has_cors_headers(response)) << response;
+    }
+
+    // Malformed: no Origin, or no or an unknown method.
+    for (const micros3::http::Headers &headers : std::vector<micros3::http::Headers>{
+             {{"Access-Control-Request-Method", "GET"}},
+             {{"Origin", "https://app.example.com"}},
+             {{"Origin", "https://app.example.com"}, {"Access-Control-Request-Method", "PATCH"}}}) {
+        response = preflight("/objects/key", headers);
+        EXPECT_TRUE(status_is(response, "400")) << response;
+        EXPECT_TRUE(has(body_of(response), "<Code>BadRequest</Code>")) << response;
+        EXPECT_FALSE(has_cors_headers(response)) << response;
+    }
+}
+
+TEST(CorsBehavior, SignedRequests) {
+    ObjectServer s;
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects/key", "cors content"), "200"));
+    // No configuration: no CORS headers and no Vary.
+    std::string response = s.send("GET", "/objects/key", "", {{"origin", "https://app.example.com"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_FALSE(has_cors_headers(response)) << response;
+    EXPECT_EQ(header_value(response, "Vary"), "<missing>");
+
+    ASSERT_TRUE(status_is(s.send("PUT", "/objects?cors", kBehaviorRules), "200"));
+
+    response = s.send("GET", "/objects/key", "", {{"origin", "https://app.example.com"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(body_of(response), "cors content");
+    EXPECT_EQ(header_value(response, "Access-Control-Allow-Origin"), "https://app.example.com");
+    EXPECT_EQ(header_value(response, "Access-Control-Expose-Headers"), "ETag, x-amz-meta-owner");
+    EXPECT_EQ(header_value(response, "Vary"), "Origin");
+
+    response = s.send("HEAD", "/objects/key", "", {{"origin", "https://images.example.net"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "Access-Control-Allow-Origin"), "https://images.example.net");
+    EXPECT_EQ(header_value(response, "Content-Length"), "12");
+
+    response = s.send("GET", "/objects/key", "", {{"origin", "https://other.example"}});
+    EXPECT_EQ(header_value(response, "Access-Control-Allow-Origin"), "*");
+
+    response = s.send("PUT", "/objects/upload", "x", {{"origin", "https://uploader.example.org"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(header_value(response, "Access-Control-Allow-Origin"), "https://uploader.example.org");
+    EXPECT_EQ(header_value(response, "Access-Control-Expose-Headers"), "x-amz-request-id");
+
+    // CORS does not authorize: unmatched requests succeed without CORS headers.
+    response = s.send("PUT", "/objects/other", "x", {{"origin", "https://other.example"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_FALSE(has_cors_headers(response)) << response;
+    EXPECT_EQ(header_value(response, "Vary"), "Origin");
+    response = s.send("HEAD", "/objects/key", "", {{"origin", "http://images.example.net"}});
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_FALSE(has_cors_headers(response)) << response;
+    response = s.send("GET", "/objects/key");
+    ASSERT_TRUE(status_is(response, "200")) << response;
+    EXPECT_FALSE(has_cors_headers(response)) << response;
+    EXPECT_EQ(header_value(response, "Vary"), "Origin");
+
+    // Error responses carry the headers too, so a browser can read them.
+    response = s.send("GET", "/objects/missing", "", {{"origin", "https://app.example.com"}});
+    ASSERT_TRUE(status_is(response, "404")) << response;
+    EXPECT_EQ(header_value(response, "Access-Control-Allow-Origin"), "https://app.example.com");
 }
 
 // Multipart uploads, end to end over HTTP.

@@ -36,16 +36,41 @@ void PayloadHashExchange::on_abort() {
     if (inner_) inner_->on_abort();
 }
 
+CorsExchange::CorsExchange(std::unique_ptr<http::Exchange> inner, Store &store, const http::Request &request,
+                           const router::Route &route)
+    : inner_(std::move(inner)), store_(store) {
+    request_.method = request.method;
+    if (auto origin = request.header("origin")) request_.headers.emplace_back("origin", std::string(*origin));
+    route_.op = route.op;
+    route_.bucket = route.bucket;
+}
+
+http::Response CorsExchange::on_end() {
+    http::Response response = inner_->on_end();
+    handlers::add_cors_headers(store_, request_, route_, response);
+    return response;
+}
+
 std::unique_ptr<http::Exchange> S3Service::begin(const http::Request &request) {
     const router::Route route = router::route(request.method, request.path, request.query,
                                               [&request](std::string_view name) { return request.header(name); });
+    std::unique_ptr<http::Exchange> exchange = dispatch(request, route);
+    // Preflight sets its own CORS headers, and a rejected one has none.
+    if (!route.bucket.empty() && route.op != router::Operation::Preflight &&
+        route.op != router::Operation::InvalidUri) {
+        exchange = std::make_unique<CorsExchange>(std::move(exchange), store_, request, route);
+    }
+    return exchange;
+}
+
+std::unique_ptr<http::Exchange> S3Service::dispatch(const http::Request &request, const router::Route &route) {
     const auto fixed = [&request](const S3Error &error) {
         return std::make_unique<http::FixedExchange>(http::error_response(error, request));
     };
     // A target that cannot be decoded cannot be canonicalized for signing.
     if (route.op == router::Operation::InvalidUri) return fixed(*router::route_error(route));
 
-    // CORS preflight is answered without a signature (Phase 10).
+    // CORS preflight is answered without a signature.
     std::optional<digest::Sha256Digest> expected_payload;
     if (route.op != router::Operation::Preflight) {
         auto auth = sigv4::authenticate(request, credentials_);

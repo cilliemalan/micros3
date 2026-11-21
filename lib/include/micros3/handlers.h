@@ -52,6 +52,18 @@ http::Response put_bucket_cors(Store &store, const http::Request &request, const
 http::Response get_bucket_cors(Store &store, const http::Request &request, const router::Route &route);
 http::Response delete_bucket_cors(Store &store, const http::Request &request, const router::Route &route);
 
+// CORS preflight OPTIONS (cors_handlers.cpp), answered without a signature. A
+// missing Origin or an invalid Access-Control-Request-Method is BadRequest
+// (400). A missing bucket, a bucket without a configuration, or a request no
+// rule allows is AccessForbidden (403), with no CORS headers.
+http::Response preflight(Store &store, const http::Request &request, const router::Route &route);
+
+// Adds CORS headers to the response to a signed request on a bucket, from the
+// first rule that matches its Origin and method. Adds `Vary: Origin` whenever
+// the bucket has a configuration, since the response then depends on Origin.
+void add_cors_headers(Store &store, const http::Request &request, const router::Route &route,
+                      http::Response &response);
+
 // Multipart uploads (multipart_handlers.cpp). UploadPart streams its body.
 http::Response create_multipart_upload(Store &store, const http::Request &request, const router::Route &route);
 std::unique_ptr<http::Exchange> upload_part(Store &store, const http::Request &request, const router::Route &route);

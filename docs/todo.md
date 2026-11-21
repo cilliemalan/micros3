@@ -140,13 +140,13 @@ All are recorded in design.md. Nothing here is open.
 
 ## Phase 10: CORS behavior
 
-- [ ] Preflight OPTIONS on bucket and object paths, with no signature. Match the first rule for the origin, the `Access-Control-Request-Method` and the `Access-Control-Request-Headers`. A rejected preflight returns 403 with no CORS headers.
-- [ ] Preflight response: `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers` (only the requested headers that match), `Access-Control-Max-Age` and `Access-Control-Expose-Headers`.
-- [ ] Origin wildcards (`*`, and `https://*.example.net` style per the checks) and a single `*` in `AllowedHeaders`, which matches any run of characters (Floci fails this).
-- [ ] Signed GET, HEAD and PUT requests carrying an `Origin` header get CORS headers from the first matching rule. Add `Vary: Origin`.
-- [ ] Match `cors-behavior.js` for the exact echo of `Access-Control-Allow-Origin` (origin or `*`).
+- [x] Preflight OPTIONS on bucket and object paths, with no signature. Match the first rule for the origin, the `Access-Control-Request-Method` and the `Access-Control-Request-Headers`. A rejected preflight returns 403 with no CORS headers. (`preflight` in `lib/cors_handlers.cpp`, with matching in `lib/cors.cpp`. A missing bucket, no configuration or no matching rule is `AccessForbidden` (403). A missing `Origin` or a missing or unknown requested method is `BadRequest` (400), as in S3.)
+- [x] Preflight response: `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers` (only the requested headers that match), `Access-Control-Max-Age` and `Access-Control-Expose-Headers`. (Plus `Access-Control-Allow-Credentials: true` when the origin is echoed, and `Vary: Origin, Access-Control-Request-Headers, Access-Control-Request-Method`.)
+- [x] Origin wildcards (`*`, and `https://*.example.net` style per the checks) and a single `*` in `AllowedHeaders`, which matches any run of characters (Floci fails this). (`cors::wildcard_match`. Origins compare exactly and header names case-insensitively.)
+- [x] Signed GET, HEAD and PUT requests carrying an `Origin` header get CORS headers from the first matching rule. Add `Vary: Origin`. (`CorsExchange` in `lib/service.cpp` wraps every request on a bucket, error responses included. `Vary: Origin` is added whenever the bucket has a configuration, with or without `Origin`.)
+- [x] Match `cors-behavior.js` for the exact echo of `Access-Control-Allow-Origin` (origin or `*`). (`*` when the matching origin pattern is `*`, else the origin.)
 
-**Checks:** `cors-behavior.js`.
+**Checks:** `cors-behavior.js`. (On 2026-11-21, "CORS headers on actual requests" passed, and a full `verify` run passed all 43 checks. Tests in `test/cors_test.cpp` and `test/server_test.cpp`.)
 
 ## Cross-cutting
 

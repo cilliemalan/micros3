@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 
 namespace micros3::cors {
@@ -145,6 +146,112 @@ bool save(Store &store, std::string_view bucket, const std::optional<Configurati
     update.bind_text(2, bucket).run();
     txn.commit();
     return true;
+}
+
+namespace {
+
+bool equal_chars(std::string_view a, std::string_view b, bool ignore_case) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        const auto x = static_cast<unsigned char>(a[i]);
+        const auto y = static_cast<unsigned char>(b[i]);
+        if (ignore_case ? std::tolower(x) != std::tolower(y) : x != y) return false;
+    }
+    return true;
+}
+
+std::string lower(std::string_view text) {
+    std::string result(text);
+    for (char &c : result) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return result;
+}
+
+bool contains(const std::vector<std::string> &values, std::string_view value) {
+    return std::find(values.begin(), values.end(), value) != values.end();
+}
+
+const std::string *matching_origin(const Rule &rule, std::string_view origin) {
+    for (const std::string &pattern : rule.allowed_origins) {
+        if (wildcard_match(pattern, origin, false)) return &pattern;
+    }
+    return nullptr;
+}
+
+std::string join(const std::vector<std::string> &values) {
+    std::string result;
+    for (const std::string &value : values) {
+        if (!result.empty()) result += ", ";
+        result += value;
+    }
+    return result;
+}
+
+} // namespace
+
+bool wildcard_match(std::string_view pattern, std::string_view value, bool ignore_case) {
+    const std::size_t star = pattern.find('*');
+    if (star == std::string_view::npos) return equal_chars(pattern, value, ignore_case);
+    const std::string_view prefix = pattern.substr(0, star);
+    const std::string_view suffix = pattern.substr(star + 1);
+    return value.size() >= prefix.size() + suffix.size() &&
+           equal_chars(prefix, value.substr(0, prefix.size()), ignore_case) &&
+           equal_chars(suffix, value.substr(value.size() - suffix.size()), ignore_case);
+}
+
+const Rule *match_request(const Configuration &config, std::string_view origin, std::string_view method) {
+    for (const Rule &rule : config) {
+        if (contains(rule.allowed_methods, method) && matching_origin(rule, origin)) return &rule;
+    }
+    return nullptr;
+}
+
+std::optional<PreflightMatch> match_preflight(const Configuration &config, std::string_view origin,
+                                              std::string_view method, std::string_view request_headers) {
+    std::vector<std::string> requested;
+    while (!request_headers.empty()) {
+        const std::size_t comma = request_headers.find(',');
+        std::string_view item = request_headers.substr(0, comma);
+        request_headers = comma == std::string_view::npos ? std::string_view() : request_headers.substr(comma + 1);
+        const std::size_t first = item.find_first_not_of(" \t");
+        if (first == std::string_view::npos) continue;
+        item = item.substr(first, item.find_last_not_of(" \t") - first + 1);
+        std::string name = lower(item);
+        if (!contains(requested, name)) requested.push_back(std::move(name));
+    }
+    for (const Rule &rule : config) {
+        if (!contains(rule.allowed_methods, method) || !matching_origin(rule, origin)) continue;
+        const bool headers_allowed = std::all_of(requested.begin(), requested.end(), [&rule](const std::string &name) {
+            return std::any_of(rule.allowed_headers.begin(), rule.allowed_headers.end(),
+                               [&name](const std::string &pattern) { return wildcard_match(pattern, name, true); });
+        });
+        if (headers_allowed) return PreflightMatch{&rule, std::move(requested)};
+    }
+    return std::nullopt;
+}
+
+void add_headers(http::Response &response, const Rule &rule, std::string_view origin,
+                 const std::vector<std::string> &allow_headers) {
+    const std::string *pattern = matching_origin(rule, origin);
+    if (pattern && *pattern == "*") {
+        response.set_header("Access-Control-Allow-Origin", "*");
+    } else {
+        response.set_header("Access-Control-Allow-Origin", std::string(origin));
+        response.set_header("Access-Control-Allow-Credentials", "true");
+    }
+    response.set_header("Access-Control-Allow-Methods", join(rule.allowed_methods));
+    if (!allow_headers.empty()) response.set_header("Access-Control-Allow-Headers", join(allow_headers));
+    if (!rule.expose_headers.empty()) response.set_header("Access-Control-Expose-Headers", join(rule.expose_headers));
+    if (rule.max_age_seconds) response.set_header("Access-Control-Max-Age", std::to_string(*rule.max_age_seconds));
+}
+
+void add_vary(http::Response &response, std::string_view names) {
+    for (auto &[key, value] : response.headers) {
+        if (equal_chars(key, "vary", true)) {
+            value = value.empty() ? std::string(names) : value + ", " + std::string(names);
+            return;
+        }
+    }
+    response.headers.emplace_back("Vary", std::string(names));
 }
 
 } // namespace micros3::cors

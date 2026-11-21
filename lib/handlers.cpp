@@ -89,6 +89,7 @@ std::unique_ptr<http::Exchange> begin(Store &store, const http::Request &request
         });
     case Operation::GetBucketCors: return ignoring_body(&get_bucket_cors);
     case Operation::DeleteBucketCors: return ignoring_body(&delete_bucket_cors);
+    case Operation::Preflight: return ignoring_body(&preflight);
     case Operation::DeleteObjects:
         return buffered([](Store &s, const http::Request &q, const router::Route &r, const std::string &body) {
             return delete_objects(s, q, r, body);

@@ -5,6 +5,7 @@
 // it. The column keeps the document this module writes, so what is stored has
 // always been validated, and rule order (first match wins) is kept.
 
+#include "micros3/http.h"
 #include "micros3/s3error.h"
 #include "micros3/store.h"
 
@@ -59,5 +60,36 @@ Lookup load(Store &store, std::string_view bucket);
 // Replaces (or with nullopt, removes) a bucket's configuration. Returns false
 // when the bucket does not exist.
 bool save(Store &store, std::string_view bucket, const std::optional<Configuration> &config);
+
+// True when `value` matches `pattern`, in which a single `*` matches any run
+// of characters (including none). Header names compare case-insensitively,
+// origins exactly.
+bool wildcard_match(std::string_view pattern, std::string_view value, bool ignore_case);
+
+// The first rule that allows an actual (non-preflight) request with this
+// origin and method, or nullptr.
+const Rule *match_request(const Configuration &config, std::string_view origin, std::string_view method);
+
+// A preflight that matched a rule.
+struct PreflightMatch {
+    const Rule *rule = nullptr;
+    std::vector<std::string> headers; // the requested headers, lower case
+};
+
+// The first rule that allows a preflight with this origin, requested method
+// and `Access-Control-Request-Headers` value (a comma-separated list, each of
+// which must match one of the rule's AllowedHeader entries), or nullopt.
+std::optional<PreflightMatch> match_preflight(const Configuration &config, std::string_view origin,
+                                              std::string_view method, std::string_view request_headers);
+
+// Adds `Access-Control-Allow-Origin` (`*` when the rule allows any origin,
+// else `origin` with `Access-Control-Allow-Credentials`), and the rule's
+// methods, expose headers and max age, to `response`. `allow_headers` is
+// sent as `Access-Control-Allow-Headers` when not empty.
+void add_headers(http::Response &response, const Rule &rule, std::string_view origin,
+                 const std::vector<std::string> &allow_headers = {});
+
+// Adds `names` to the response's Vary header, keeping any already there.
+void add_vary(http::Response &response, std::string_view names);
 
 } // namespace micros3::cors

@@ -50,6 +50,24 @@ or 412 (`If-Match`/`If-Unmodified-Since`); a failed copy condition returns 412
 or unparseable dates, and conditional writes (`If-None-Match` on PutObject or
 CompleteMultipartUpload), are not defined.
 
+### CORS
+A bucket's CORS rules are evaluated in order, and the first rule that matches
+is used. A preflight `OPTIONS` request on a bucket or object path needs no
+signature. It matches a rule when its `Origin`, its
+`Access-Control-Request-Method` and every header in its
+`Access-Control-Request-Headers` are allowed. A matched preflight returns 200 with
+`Access-Control-Allow-Origin`, `-Allow-Methods`, `-Allow-Headers` (the requested
+headers), `-Expose-Headers` and `-Max-Age`. A rejected one returns 403
+`AccessForbidden` with no CORS headers. A missing `Origin` or an invalid requested
+method returns 400 `BadRequest`. Signed requests with an `Origin` get the same
+headers, except `-Allow-Headers`, from the first rule that allows the origin and
+method. CORS does not authorize requests, so an unmatched request still succeeds
+without CORS headers. An origin or header pattern may hold one `*`, which matches
+any run of characters. Header names are compared case-insensitively. The
+response echoes the origin, with `Access-Control-Allow-Credentials: true`,
+unless the matching pattern is `*`. Responses on a bucket with a CORS
+configuration carry `Vary: Origin`.
+
 ### Unsupported features
 bucket and object tagging, ACLs, bucket policies, versioning, replication, object locking, website configuration, and changing bucket encryption configuration. S3 Table, S3 Select, S3 Vector are not supported.
 

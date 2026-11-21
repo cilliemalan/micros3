@@ -19,6 +19,9 @@ public:
     std::unique_ptr<http::Exchange> begin(const http::Request &request) override;
 
 private:
+    // Authenticates and routes the request to its handler's exchange.
+    std::unique_ptr<http::Exchange> dispatch(const http::Request &request, const router::Route &route);
+
     Store &store_;
     sigv4::Credentials credentials_;
 };
@@ -40,6 +43,24 @@ private:
     digest::Sha256Digest expected_;
     digest::Sha256 hash_;
     http::Request request_; // path and request ID, for the error response
+};
+
+// Wraps the exchange of a request on a bucket, adding CORS headers to its
+// response from the bucket's configuration (handlers::add_cors_headers).
+class CorsExchange : public http::Exchange {
+public:
+    CorsExchange(std::unique_ptr<http::Exchange> inner, Store &store, const http::Request &request,
+                 const router::Route &route);
+
+    void on_data(std::string_view chunk) override { inner_->on_data(chunk); }
+    http::Response on_end() override;
+    void on_abort() override { inner_->on_abort(); }
+
+private:
+    std::unique_ptr<http::Exchange> inner_;
+    Store &store_;
+    http::Request request_; // method and Origin only
+    router::Route route_;   // bucket only
 };
 
 } // namespace micros3
