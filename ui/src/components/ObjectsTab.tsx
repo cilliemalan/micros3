@@ -4,7 +4,8 @@
 // with checkboxes, paged with "Load more". The page keys it on the
 // prefix, so a new folder starts with no filter and no selection.
 // Actions (U18): Upload, New folder and Delete selected in the toolbar, and
-// a row menu with Download, Copy or move, and Delete.
+// a row menu with Details, Download, Copy or move, and Delete.
+// Details (U19): the object drawer, also opened by clicking an object's name.
 
 import { useCallback, useEffect, useState } from "react"
 import { Button } from "@ui-sdk/react/button"
@@ -44,6 +45,7 @@ import {
   FileIcon,
   FolderIcon,
   FolderPlusIcon,
+  InfoIcon,
   MoreIcon,
   RefreshIcon,
   SearchIcon,
@@ -51,6 +53,7 @@ import {
   UploadIcon,
 } from "./Icons"
 import { NewFolderDialog } from "./NewFolderDialog"
+import { ObjectDrawer } from "./ObjectDrawer"
 import { Time } from "./Time"
 import { notify, notifyError } from "./Toasts"
 import { UploadDialog } from "./UploadDialog"
@@ -77,6 +80,7 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
   const [newFolder, setNewFolder] = useState(false)
   const [deleting, setDeleting] = useState<string[] | null>(null)
   const [copying, setCopying] = useState<string | null>(null)
+  const [details, setDetails] = useState<string | null>(null)
   const [rowMenu] = useState(() => createMenuController<ObjectSummary>())
 
   useEffect(() => {
@@ -115,6 +119,8 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
 
   const reload = useCallback(() => setReloads((n) => n + 1), [])
 
+  const closeDetails = useCallback(() => setDetails(null), [])
+
   function removeRows(keys: string[]) {
     const gone = new Set(keys)
     setState((s) => ({ ...s, objects: s.objects.filter((o) => !gone.has(o.key)) }))
@@ -124,7 +130,9 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
   function rowAction(action: string) {
     const object = rowMenu.getPayload()
     if (!object) return
-    if (action === "download") {
+    if (action === "details") {
+      setDetails(object.key)
+    } else if (action === "download") {
       downloadObject(bucket, object.key)
       notify.success("Download started", { description: object.key })
     } else if (action === "copy") {
@@ -258,10 +266,15 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
                         </Checkbox>
                       </td>
                       <td className="mono key-cell">
-                        <span className="entry" title={object.key}>
+                        <button
+                          type="button"
+                          className="entry entry-button"
+                          title={object.key}
+                          onClick={() => setDetails(object.key)}
+                        >
                           <FileIcon />
                           <span>{name}</span>
-                        </span>
+                        </button>
                       </td>
                       <td className="num" title={`${object.size.toLocaleString()} bytes`}>
                         {formatSize(object.size)}
@@ -301,6 +314,12 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
 
       <Menu controller={rowMenu} onAction={rowAction}>
         <MenuContent align="end">
+          <MenuItem value="details">
+            <MenuItemIcon>
+              <InfoIcon />
+            </MenuItemIcon>
+            Details
+          </MenuItem>
           <MenuItem value="download">
             <MenuItemIcon>
               <DownloadIcon />
@@ -344,6 +363,12 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
         keys={deleting}
         onClose={() => setDeleting(null)}
         onDeleted={removeRows}
+      />
+      <ObjectDrawer
+        bucket={bucket}
+        objectKey={details}
+        onClose={closeDetails}
+        onMissing={(key) => removeRows([key])}
       />
       <CopyObjectDialog
         bucket={bucket}

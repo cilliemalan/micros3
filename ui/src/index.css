@@ -649,3 +649,101 @@ a svg {
   flex-direction: column;
   gap: 2px;
 }
+
+/* ---------------------------------------------------------- object drawer */
+
+[data-slot="drawer-content"].drawer {
+  width: min(34rem, 100vw);
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 0;
+  gap: 0;
+  border-top: 0;
+  border-bottom: 0;
+  border-right: 0;
+}
+
+.drawer-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.drawer-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.drawer-head [data-slot="drawer-description"] {
+  margin: 0;
+}
+
+.drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  gap: var(--space-6);
+}
+
+.drawer-body .panel h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.drawer-body .details dd {
+  min-width: 0;
+}
+
+.meta-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
+  gap: var(--space-2);
+  align-items: start;
+}
+
+.entry-button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.entry-button:hover span {
+  text-decoration: underline;
+}
+
+.preview-image {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--radius);
+  background: var(--ui-muted);
+}
+
+.preview-image img {
+  max-width: 100%;
+  max-height: 24rem;
+  object-fit: contain;
+}
+
+.preview-text {
+  margin: 0;
+  max-height: 24rem;
+  overflow: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--radius);
+  background: var(--ui-muted);
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
