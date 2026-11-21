@@ -1,4 +1,5 @@
-// Tests for the web UI's JSON API: the bucket routes (docs/todo.md, U8).
+// Tests for the web UI's JSON API: the bucket routes (docs/todo.md, U8) and
+// the object routes (U9).
 
 #include "micros3/buckets.h"
 #include "micros3/clock.h"
@@ -12,7 +13,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <set>
+#include <vector>
 #include <optional>
 #include <string>
 
@@ -269,6 +274,288 @@ TEST_F(UiApi, ChangingRoutesWaitForTheBodyToEnd) {
     exchange->on_abort();
     exchange.reset();
     EXPECT_TRUE(micros3::buckets::find(store, "photos"));
+}
+
+// Percent-encodes every byte that is not unreserved, as encodeURIComponent.
+std::string enc(const std::string &text) {
+    static const char *hex = "0123456789ABCDEF";
+    std::string out;
+    for (unsigned char c : text) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('%');
+            out.push_back(hex[c >> 4]);
+            out.push_back(hex[c & 15]);
+        }
+    }
+    return out;
+}
+
+// Keys a browser user may well type, each needing care somewhere.
+const std::vector<std::string> kAwkwardKeys = {
+    "with space.txt", "100%.txt", "a/b/c.txt", "caf\xc3\xa9/\xe6\x97\xa5\xe6\x9c\xac.txt", "<script>alert(1)</script>",
+    "plus+and&amp=.txt",
+};
+
+TEST_F(UiApi, ListObjectsOneLevel) {
+    make_bucket("photos");
+    put_object("photos", "top.txt");
+    put_object("photos", "a/one.txt");
+    put_object("photos", "a/two.txt");
+    put_object("photos", "b/c/deep.txt");
+    const Response response = call("GET", "/api/buckets/photos/objects?delimiter=%2F");
+    ASSERT_EQ(response.status, 200) << response.body;
+    const json body = parse(response);
+    EXPECT_EQ(body["folders"], json::parse(R"(["a/","b/"])"));
+    ASSERT_EQ(body["objects"].size(), 1u);
+    EXPECT_EQ(body["objects"][0]["key"], "top.txt");
+    EXPECT_EQ(body["objects"][0]["size"], 1);
+    EXPECT_EQ(body["objects"][0]["etag"], "\"etag\"");
+    EXPECT_EQ(body["objects"][0]["lastModified"], micros3::clock::iso8601(1700000000000));
+    EXPECT_FALSE(body.contains("next"));
+
+    const json inside = parse(call("GET", "/api/buckets/photos/objects?prefix=a%2F&delimiter=%2F"));
+    EXPECT_EQ(inside["folders"], json::array());
+    ASSERT_EQ(inside["objects"].size(), 2u);
+    EXPECT_EQ(inside["objects"][0]["key"], "a/one.txt");
+    EXPECT_EQ(inside["objects"][1]["key"], "a/two.txt");
+
+    // With no delimiter, every key is listed.
+    EXPECT_EQ(parse(call("GET", "/api/buckets/photos/objects"))["objects"].size(), 4u);
+}
+
+TEST_F(UiApi, ListObjectsPages) {
+    make_bucket("photos");
+    for (const char *key : {"a", "b/x", "b/y", "c", "d"}) put_object("photos", key);
+    std::vector<std::string> seen;
+    std::string after;
+    for (int page = 0; page < 10; ++page) {
+        std::string path = "/api/buckets/photos/objects?delimiter=/&limit=2";
+        if (!after.empty()) path += "&after=" + enc(after);
+        const json body = parse(call("GET", path));
+        for (const auto &f : body["folders"]) seen.push_back(f.get<std::string>());
+        for (const auto &o : body["objects"]) seen.push_back(o["key"].get<std::string>());
+        if (!body.contains("next")) break;
+        after = body["next"].get<std::string>();
+    }
+    // Folders come before objects within a page, so compare in order.
+    std::sort(seen.begin(), seen.end());
+    EXPECT_EQ(seen, (std::vector<std::string>{"a", "b/", "c", "d"}));
+}
+
+TEST_F(UiApi, ListObjectsErrors) {
+    expect_error(call("GET", "/api/buckets/nope/objects"), 404, "NoSuchBucket");
+    make_bucket("photos");
+    expect_error(call("GET", "/api/buckets/photos/objects?limit=0"), 400, "InvalidArgument");
+    expect_error(call("GET", "/api/buckets/photos/objects?limit=1001"), 400, "InvalidArgument");
+    expect_error(call("GET", "/api/buckets/photos/objects?limit=x"), 400, "InvalidArgument");
+    expect_error(call("GET", "/api/buckets/photos/objects?limit=99999999999999999999"), 400, "InvalidArgument");
+    expect_error(call("GET", "/api/buckets/photos/objects?prefix=%zz"), 400, "InvalidURI");
+    expect_error(call("POST", "/api/buckets/photos/objects"), 405, "MethodNotAllowed");
+    EXPECT_EQ(call("GET", "/api/buckets/photos/objects?limit=1000").status, 200);
+}
+
+TEST_F(UiApi, ListObjectsWithAwkwardKeys) {
+    make_bucket("photos");
+    for (const std::string &key : kAwkwardKeys) put_object("photos", key);
+    const json body = parse(call("GET", "/api/buckets/photos/objects"));
+    std::set<std::string> keys;
+    for (const auto &o : body["objects"]) keys.insert(o["key"].get<std::string>());
+    EXPECT_EQ(keys, std::set<std::string>(kAwkwardKeys.begin(), kAwkwardKeys.end()));
+}
+
+TEST_F(UiApi, GetMeta) {
+    make_bucket("photos");
+    put_object("photos", "cat.jpg");
+    ASSERT_EQ(micros3::objects::update_headers(store, "photos", "cat.jpg",
+                                               {{"Content-Type", "image/jpeg"}, {"x-amz-meta-owner", "me"}}),
+              micros3::objects::UpdateResult::Updated);
+    const Response response = call("GET", "/api/buckets/photos/meta?key=cat.jpg");
+    ASSERT_EQ(response.status, 200) << response.body;
+    const json body = parse(response);
+    EXPECT_EQ(body["key"], "cat.jpg");
+    EXPECT_EQ(body["size"], 1);
+    EXPECT_EQ(body["etag"], "\"etag\"");
+    EXPECT_EQ(body["lastModified"], micros3::clock::iso8601(1700000000000));
+    EXPECT_EQ(body["headers"], json::parse(R"({"Content-Type":"image/jpeg","x-amz-meta-owner":"me"})"));
+}
+
+TEST_F(UiApi, GetMetaWithAwkwardKeys) {
+    make_bucket("photos");
+    for (const std::string &key : kAwkwardKeys) {
+        put_object("photos", key);
+        const Response response = call("GET", "/api/buckets/photos/meta?key=" + enc(key));
+        ASSERT_EQ(response.status, 200) << key << ": " << response.body;
+        EXPECT_EQ(parse(response)["key"], key);
+    }
+}
+
+TEST_F(UiApi, MetaErrors) {
+    expect_error(call("GET", "/api/buckets/nope/meta?key=a"), 404, "NoSuchBucket");
+    expect_error(call("PUT", "/api/buckets/nope/meta?key=a", R"({"headers":{}})"), 404, "NoSuchBucket");
+    make_bucket("photos");
+    expect_error(call("GET", "/api/buckets/photos/meta?key=a"), 404, "NoSuchKey");
+    expect_error(call("PUT", "/api/buckets/photos/meta?key=a", R"({"headers":{}})"), 404, "NoSuchKey");
+    expect_error(call("GET", "/api/buckets/photos/meta"), 400, "InvalidArgument");
+    expect_error(call("GET", "/api/buckets/photos/meta?key="), 400, "InvalidArgument");
+    expect_error(call("GET", "/api/buckets/photos/meta?key=" + std::string(1025, 'k')), 400, "KeyTooLongError");
+    expect_error(call("GET", "/api/buckets/photos/meta?key=%zz"), 400, "InvalidURI");
+    expect_error(call("DELETE", "/api/buckets/photos/meta?key=a"), 405, "MethodNotAllowed");
+}
+
+TEST_F(UiApi, PutMetaKeepsTheBlobEtagAndTime) {
+    make_bucket("photos");
+    const std::string key = "dir/caf\xc3\xa9 100%.txt";
+    put_object("photos", key);
+    const auto before = micros3::objects::find(store, "photos", key);
+    ASSERT_TRUE(before);
+    const Response response =
+        call("PUT", "/api/buckets/photos/meta?key=" + enc(key),
+             R"({"headers":{"content-type":"text/plain","Cache-Control":"no-cache","X-Amz-Meta-Owner":"me"}})");
+    ASSERT_EQ(response.status, 200) << response.body;
+    const json body = parse(response);
+    EXPECT_EQ(body["key"], key);
+    EXPECT_EQ(body["etag"], "\"etag\"");
+    EXPECT_EQ(body["lastModified"], micros3::clock::iso8601(1700000000000));
+    EXPECT_EQ(body["headers"],
+              json::parse(R"({"Content-Type":"text/plain","Cache-Control":"no-cache","x-amz-meta-owner":"me"})"));
+    const auto after = micros3::objects::find(store, "photos", key);
+    ASSERT_TRUE(after);
+    EXPECT_EQ(after->blob_id, before->blob_id);
+    EXPECT_EQ(after->etag, before->etag);
+    EXPECT_EQ(after->last_modified_ms, before->last_modified_ms);
+    EXPECT_EQ(after->size, before->size);
+
+    // An empty object clears every stored header.
+    ASSERT_EQ(call("PUT", "/api/buckets/photos/meta?key=" + enc(key), R"({"headers":{}})").status, 200);
+    EXPECT_TRUE(micros3::objects::find(store, "photos", key)->headers.empty());
+}
+
+TEST_F(UiApi, PutMetaRefusesBadHeaders) {
+    make_bucket("photos");
+    put_object("photos", "a");
+    const std::string path = "/api/buckets/photos/meta?key=a";
+    expect_error(call("PUT", path, "nope"), 400, "MalformedJSON");
+    expect_error(call("PUT", path, R"({})"), 400, "MalformedJSON");
+    expect_error(call("PUT", path, R"({"headers":[]})"), 400, "MalformedJSON");
+    expect_error(call("PUT", path, R"({"headers":{"Content-Type":1}})"), 400, "MalformedJSON");
+    expect_error(call("PUT", path, R"({"headers":{"Content-Length":"1"}})"), 400, "InvalidArgument");
+    expect_error(call("PUT", path, R"({"headers":{"x-amz-meta-":"1"}})"), 400, "InvalidArgument");
+    expect_error(call("PUT", path, R"({"headers":{"x-amz-meta-a b":"1"}})"), 400, "InvalidArgument");
+    expect_error(call("PUT", path, R"({"headers":{"x-amz-meta-a":"1\r\nSet-Cookie: x"}})"), 400, "InvalidArgument");
+    expect_error(call("PUT", path, R"({"headers":{"x-amz-meta-a":"1","X-Amz-Meta-A":"2"}})"), 400,
+                 "InvalidArgument");
+    expect_error(call("PUT", path, R"({"headers":{"x-amz-meta-big":")" + std::string(2100, 'v') + R"("}})"), 400,
+                 "MetadataTooLarge");
+    EXPECT_TRUE(micros3::objects::find(store, "photos", "a")->headers.empty());
+}
+
+TEST_F(UiApi, DeleteObjects) {
+    make_bucket("photos");
+    for (const std::string &key : kAwkwardKeys) put_object("photos", key);
+    json keys = json::array();
+    for (const std::string &key : kAwkwardKeys) keys.push_back(key);
+    keys.push_back("missing");
+    keys.push_back("");
+    const Response response = call("POST", "/api/buckets/photos/delete", json{{"keys", keys}}.dump());
+    ASSERT_EQ(response.status, 200) << response.body;
+    const json body = parse(response);
+    EXPECT_EQ(body["deleted"].size(), kAwkwardKeys.size() + 1);
+    ASSERT_EQ(body["errors"].size(), 1u);
+    EXPECT_EQ(body["errors"][0]["key"], "");
+    EXPECT_EQ(body["errors"][0]["code"], "InvalidArgument");
+    for (const std::string &key : kAwkwardKeys) EXPECT_FALSE(micros3::objects::find(store, "photos", key)) << key;
+}
+
+TEST_F(UiApi, DeleteObjectsErrors) {
+    expect_error(call("POST", "/api/buckets/nope/delete", R"({"keys":["a"]})"), 404, "NoSuchBucket");
+    make_bucket("photos");
+    put_object("photos", "a");
+    expect_error(call("POST", "/api/buckets/photos/delete", "nope"), 400, "MalformedJSON");
+    expect_error(call("POST", "/api/buckets/photos/delete", R"({"keys":"a"})"), 400, "MalformedJSON");
+    expect_error(call("POST", "/api/buckets/photos/delete", R"({"keys":["a",1]})"), 400, "MalformedJSON");
+    json many = json::array();
+    for (int i = 0; i < 1001; ++i) many.push_back("a");
+    expect_error(call("POST", "/api/buckets/photos/delete", json{{"keys", many}}.dump()), 400, "MalformedJSON");
+    EXPECT_TRUE(micros3::objects::find(store, "photos", "a"));
+    many.erase(many.begin());
+    EXPECT_EQ(call("POST", "/api/buckets/photos/delete", json{{"keys", many}}.dump()).status, 200);
+    EXPECT_FALSE(micros3::objects::find(store, "photos", "a"));
+    expect_error(call("GET", "/api/buckets/photos/delete"), 405, "MethodNotAllowed");
+}
+
+TEST_F(UiApi, CopyObject) {
+    make_bucket("photos");
+    make_bucket("backup");
+    put_object("photos", "a/cat.jpg");
+    ASSERT_EQ(micros3::objects::update_headers(store, "photos", "a/cat.jpg", {{"Content-Type", "image/jpeg"}}),
+              micros3::objects::UpdateResult::Updated);
+    for (const std::string &key : kAwkwardKeys) {
+        const json request = {{"source", {{"bucket", "photos"}, {"key", "a/cat.jpg"}}},
+                              {"destination", {{"bucket", "backup"}, {"key", key}}}};
+        const Response response = call("POST", "/api/buckets/photos/copy", request.dump());
+        ASSERT_EQ(response.status, 200) << key << ": " << response.body;
+        const json body = parse(response);
+        EXPECT_EQ(body["key"], key);
+        EXPECT_EQ(body["size"], 1);
+        EXPECT_EQ(body["etag"], "\"etag\"");
+        const auto copy = micros3::objects::find(store, "backup", key);
+        ASSERT_TRUE(copy) << key;
+        EXPECT_EQ(body["lastModified"], micros3::clock::iso8601(copy->last_modified_ms));
+        EXPECT_EQ(copy->headers, (micros3::http::Headers{{"Content-Type", "image/jpeg"}}));
+    }
+    EXPECT_TRUE(micros3::objects::find(store, "photos", "a/cat.jpg"));
+}
+
+TEST_F(UiApi, CopyDefaultsToThePathBucket) {
+    make_bucket("photos");
+    put_object("photos", "a");
+    const Response response =
+        call("POST", "/api/buckets/photos/copy", R"({"source":{"key":"a"},"destination":{"key":"b"}})");
+    ASSERT_EQ(response.status, 200) << response.body;
+    EXPECT_TRUE(micros3::objects::find(store, "photos", "a"));
+    EXPECT_TRUE(micros3::objects::find(store, "photos", "b"));
+}
+
+TEST_F(UiApi, MoveObject) {
+    make_bucket("photos");
+    make_bucket("backup");
+    const std::string key = "<script>x</script> 100%/caf\xc3\xa9";
+    put_object("photos", key);
+    const json request = {{"source", {{"bucket", "photos"}, {"key", key}}},
+                          {"destination", {{"bucket", "backup"}, {"key", "moved/" + key}}},
+                          {"move", true}};
+    const Response response = call("POST", "/api/buckets/photos/copy", request.dump());
+    ASSERT_EQ(response.status, 200) << response.body;
+    EXPECT_EQ(parse(response)["key"], "moved/" + key);
+    EXPECT_FALSE(micros3::objects::find(store, "photos", key));
+    EXPECT_TRUE(micros3::objects::find(store, "backup", "moved/" + key));
+}
+
+TEST_F(UiApi, CopyErrors) {
+    make_bucket("photos");
+    put_object("photos", "a");
+    const std::string path = "/api/buckets/photos/copy";
+    expect_error(call("POST", path, "nope"), 400, "MalformedJSON");
+    expect_error(call("POST", path, R"({"destination":{"key":"b"}})"), 400, "MalformedJSON");
+    expect_error(call("POST", path, R"({"source":{"key":"a"}})"), 400, "MalformedJSON");
+    expect_error(call("POST", path, R"({"source":{"key":"a"},"destination":{"key":2}})"), 400, "MalformedJSON");
+    expect_error(call("POST", path, R"({"source":{"key":"a"},"destination":{"key":"b"},"move":"yes"})"), 400,
+                 "MalformedJSON");
+    expect_error(call("POST", path, R"({"source":{"key":"a"},"destination":{"key":""}})"), 400, "InvalidArgument");
+    expect_error(call("POST", path,
+                      json{{"source", {{"key", "a"}}}, {"destination", {{"key", std::string(1025, 'k')}}}}.dump()),
+                 400, "KeyTooLongError");
+    expect_error(call("POST", path, R"({"source":{"key":"missing"},"destination":{"key":"b"}})"), 404, "NoSuchKey");
+    expect_error(call("POST", path, R"({"source":{"key":"a"},"destination":{"bucket":"nope","key":"b"}})"), 404,
+                 "NoSuchBucket");
+    expect_error(call("POST", path, R"({"source":{"bucket":"nope","key":"a"},"destination":{"key":"b"}})"), 404,
+                 "NoSuchBucket");
+    expect_error(call("POST", path, R"({"source":{"key":"a"},"destination":{"key":"a"},"move":true})"), 400,
+                 "InvalidRequest");
+    EXPECT_TRUE(micros3::objects::find(store, "photos", "a"));
+    expect_error(call("GET", path), 405, "MethodNotAllowed");
 }
 
 } // namespace

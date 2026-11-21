@@ -15,6 +15,20 @@
 //   GET    /api/buckets/{bucket}/cors       the XML, or 404 NoSuchCORSConfiguration
 //   PUT    /api/buckets/{bucket}/cors       body the S3 XML, 204
 //   DELETE /api/buckets/{bucket}/cors       204
+//   GET    /api/buckets/{bucket}/objects    ?prefix=&delimiter=&after=&limit=,
+//                                           {folders, objects: [{key, size, etag,
+//                                           lastModified}], next?}
+//   GET    /api/buckets/{bucket}/meta?key=  {key, size, etag, lastModified, headers}
+//   PUT    /api/buckets/{bucket}/meta?key=  body {headers}, replaced in place (UI7);
+//                                           answers as GET
+//   POST   /api/buckets/{bucket}/delete     body {keys} (at most 1000),
+//                                           {deleted, errors: [{key, code, message}]}
+//   POST   /api/buckets/{bucket}/copy       body {source: {bucket?, key},
+//                                           destination: {bucket?, key}, move?};
+//                                           answers the copy's {key, size, etag,
+//                                           lastModified}. A missing bucket is the
+//                                           one in the path.
+// Object keys are passed in the `key` query parameter, never in the path.
 // Path segments are percent-decoded. A known path with another method is 405
 // MethodNotAllowed; HEAD is allowed wherever GET is. Other paths are 404.
 

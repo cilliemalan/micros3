@@ -88,6 +88,9 @@ The UI service is an `http::Service`, like the S3 service. It reuses the same re
 - `POST /api/buckets` answers 409 `BucketAlreadyOwnedByYou` when the bucket exists, in any region.
 - An object key is always passed in a `key` query parameter, never in the path. Keys can contain `/`, spaces, and any UTF-8, and a query parameter avoids path-encoding rules.
 - A batch takes at most 1,000 keys, as S3 does.
+- `POST .../copy`: a `bucket` left out of `source` or `destination` is the bucket in the path. Copying an object onto itself is 400 `InvalidRequest`. The copy keeps the source's stored headers. With `move`, the source is deleted after the copy succeeds; if that delete fails the copy stays and the reply is 409 `MoveIncomplete`.
+- `PUT .../meta` takes only the stored headers (`Content-Type`, `Cache-Control`, `Content-Disposition`, `Content-Encoding`, `Content-Language`, `Expires`, `x-amz-meta-*`), with names in any case. Others, repeated names, and values with control characters are 400 `InvalidArgument`. User metadata over 2 KB is 400 `MetadataTooLarge`.
+- `POST .../delete` reports an empty or too-long key in `errors` and deletes the rest. Missing keys count as deleted.
 - Requests with a body larger than the store's maximum are refused with `EntityTooLarge`.
 
 ### Routes
