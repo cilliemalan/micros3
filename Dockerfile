@@ -1,8 +1,16 @@
 # Builder: Alpine (musl), so the binary links fully statically (design.md, D4).
 FROM alpine:3.22 AS build
-RUN apk add --no-cache build-base cmake git linux-headers
+# Node.js and pnpm build the web UI (docs/UI.md, UI8). Alpine packages
+# Node.js without corepack, so corepack comes from npm. It fetches the pnpm
+# that ui/package.json pins in packageManager.
+RUN apk add --no-cache build-base cmake git linux-headers nodejs npm \
+    && npm install -g corepack \
+    && corepack enable
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 WORKDIR /src
 COPY CMakeLists.txt ./
+COPY cmake cmake
+COPY ui ui
 COPY lib lib
 COPY src src
 COPY test test
