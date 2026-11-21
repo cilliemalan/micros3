@@ -82,6 +82,9 @@ A bind-mounted data directory must be writable by user 65532.
   behind. Both start the built server on a temporary data directory and need
   curl 7.75 or newer.
 - `test/static-check.sh [binary]` checks that the binary is static.
+- `test/ui-check.sh [binary]` starts the server and checks the web UI port
+  with curl: the page, its assets, the API, and the request guards.
+- `cd ui && pnpm test` runs the web UI's unit tests.
 - `test/docker-check.sh [image]` checks the Docker image.
 - [verify/](verify/README.md) is a separate Node.js program that checks S3
   compatibility against a running endpoint:
