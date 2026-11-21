@@ -378,7 +378,7 @@ test('verifier prints usage with --help and makes no request', async t => {
   const result = await runVerifier(['--help', '--endpoint', endpoint], verifierEnvironment());
   assert.equal(result.code, 0);
   assert.match(result.stdout, /^Usage: node index\.js \[options\]/);
-  assert.match(result.stdout, /--suite <name>.*\n.*buckets, objects, listing, multipart, cors, encryption/);
+  assert.match(result.stdout, /--suite <name>.*\n.*auth, buckets, objects, listing, multipart, cors, encryption/);
   assert.equal(result.stderr, '');
   assert.equal(requests.length, 0);
 });
@@ -387,7 +387,7 @@ test('verifier rejects an unknown suite before its first request', async t => {
   const { endpoint, requests } = await startDeniedServer(t);
   const result = await runVerifier(['--endpoint', endpoint, '--suite', 'nope'], verifierEnvironment());
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /Unknown suite "nope"; expected one of: buckets,/);
+  assert.match(result.stderr, /Unknown suite "nope"; expected one of: auth, buckets,/);
   assert.doesNotMatch(result.stdout, /Target:|Results:/);
   assert.equal(requests.length, 0);
 });

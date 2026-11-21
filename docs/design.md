@@ -17,11 +17,11 @@ In scope, from [lib/README.md](../lib/README.md) and the SDK commands in `verify
 
 Out of scope: tagging, ACLs, policies, versioning, replication, object lock, website configuration, changing bucket encryption, S3 Select, S3 Tables and S3 Vectors.
 
-Requests must carry valid SigV4 signatures, and MicroS3 rejects the rest (see Authentication). `verify` signs its requests, but no check currently asserts that a bad signature is rejected. A check for a wrong secret is planned (todo V3).
+Requests must carry valid SigV4 signatures, and MicroS3 rejects the rest (see Authentication). `verify` signs its requests, and its `auth` suite (`signature.js`) asserts that a request signed with a wrong secret is rejected with 403 `SignatureDoesNotMatch` (todo V3).
 
 ## Verify program analysis
 
-`verify` is a Node.js 20+ program in `verify/`. `verify/index.js` parses options, resolves the target, creates one `S3Client` with path-style addressing and runs the suites in order: buckets, objects, listing, multipart, CORS, encryption. Each check in `verify/checks` is a named `run({ client })` function. The runner reports PASS, FAIL, BLOCKED (a prerequisite request failed) or NOT RUN (run timeout reached). Longer checks (`conditional.js`, `cors-behavior.js`, `list-parts.js`) wrap each case in `scenario(name, fn)` from `verify/test-runner.js`, so a failure reads `FAIL <check>: <scenario>: <reason>`; a missing prerequisite inside a scenario still reports BLOCKED.
+`verify` is a Node.js 20+ program in `verify/`. `verify/index.js` parses options, resolves the target, creates one `S3Client` with path-style addressing and runs the suites in order: auth, buckets, objects, listing, multipart, CORS, encryption. Each check in `verify/checks` is a named `run({ client })` function. The runner reports PASS, FAIL, BLOCKED (a prerequisite request failed) or NOT RUN (run timeout reached). Longer checks (`conditional.js`, `cors-behavior.js`, `list-parts.js`, `signature.js`) wrap each case in `scenario(name, fn)` from `verify/test-runner.js`, so a failure reads `FAIL <check>: <scenario>: <reason>`; a missing prerequisite inside a scenario still reports BLOCKED.
 
 Before any suite, the runner calls ListBuckets. If that fails, the run stops.
 
@@ -31,6 +31,7 @@ What the checks assert, by area:
 
 | Area | Files | Main assertions |
 | --- | --- | --- |
+| Authentication | signature.js | A wrong secret with the right access key ID gets 403 `SignatureDoesNotMatch` on ListBuckets, GetObject, PutObject and DeleteObject, and a rejected write changes nothing |
 | Buckets | bucket.js, resources.js | Name validation, repeat CreateBucket keeps the bucket, HeadBucket, GetBucketLocation, DeleteBucket refuses non-empty buckets, ListBuckets |
 | Objects | put-get-object.js, object.js, delete-object.js, delete-objects.js, copy-object.js | Binary and empty bodies, metadata and headers, overwrite, key isolation, NoSuchKey/NoSuchBucket codes, single-range GET and HEAD (206, Content-Range, 416), DeleteObjects per-key results and the 1,000-key limit, CopyObject with COPY and REPLACE |
 | Listing | listing.js, listing-encoding.js, encoding.js | ListObjects and ListObjectsV2 ordering, prefixes, delimiters, pagination, UTF-8 byte order, `EncodingType=url`, XML 1.0-safe output |
@@ -42,7 +43,7 @@ What the checks assert, by area:
 
 Two checks have hard-won details. The multipart checks accept `NoSuchBucket` or `NoSuchUpload` with status 404 when both bucket and upload are missing, because AWS does not document the precedence. Error handling must also cope with S3 returning an error inside an HTTP 200 response, such as EntityTooSmall during CompleteMultipartUpload.
 
-The verifier has offline unit tests (`pnpm test:unit`, 230 tests). They use a SigV4-checking in-memory HTTP fixture (`verify/test/fixtures/s3-http.js`) and run the real SDK against it. The fixture shares the verifier's assumptions, so passing these tests does not show MicroS3 is compatible. The offline suite is a regression test for the verifier, not the emulator.
+The verifier has offline unit tests (`pnpm test:unit`, 234 tests). They use a SigV4-checking in-memory HTTP fixture (`verify/test/fixtures/s3-http.js`) and run the real SDK against it. The fixture shares the verifier's assumptions, so passing these tests does not show MicroS3 is compatible. The offline suite is a regression test for the verifier, not the emulator.
 
 ## Architecture
 
@@ -289,7 +290,7 @@ Emulator-only tests, in addition to `verify`:
 - Crash safety: start a large PutObject, kill the process with SIGKILL during the upload, restart, then confirm the object is absent or complete, and that `staging/` is empty.
 - Static linkage: run `ldd` or `file` on the binary and confirm it is static.
 
-Last, run the verifier's own offline tests (`pnpm test:unit`, 230 tests) to confirm the verifier still works. Those tests do not show the emulator is compatible.
+Last, run the verifier's own offline tests (`pnpm test:unit`, 234 tests) to confirm the verifier still works. Those tests do not show the emulator is compatible.
 
 Before relying on a pass, validate the checks against a disposable AWS bucket with explicit permission, as [todo.md](todo.md) requires. Use `pnpm test --aws` only with an account where charges are acceptable.
 
@@ -310,7 +311,7 @@ Floci is the local check of `verify`, not a model of S3. Its failures are defect
 
 Other matters for consideration:
 
-1. Signatures. Should MicroS3 reject bad SigV4 signatures? `verify` never checks that. **ANSWER: MicroS3 should reject.** Decided: unsigned, unknown-key and wrong-signature requests get 403, and a `verify` check for a wrong secret is added (todo V3).
+1. Signatures. Should MicroS3 reject bad SigV4 signatures? `verify` did not check that. **ANSWER: MicroS3 should reject.** Decided: unsigned, unknown-key and wrong-signature requests get 403, and a `verify` check for a wrong secret is added (todo V3).
 2. DeleteBucket with in-progress uploads. A bucket with uploads in progress can be deleted, but `verify` treats it as stranding uploads. The earlier text of this design, which refused DeleteBucket while uploads existed, is replaced by the decision below.
    **DECIDED (D1):** DeleteBucket returns `BucketNotEmpty` when objects exist. A bucket whose only contents are uploads is deleted with its uploads and parts, and later requests on them fail with `NoSuchBucket` or `NoSuchUpload`.
 3. Object responses for SSE-S3. Should PutObject, GetObject and HeadObject return `x-amz-server-side-encryption: AES256`? The integrity checks use SSE-S3 objects, so probably yes. **ANSWER: yes**

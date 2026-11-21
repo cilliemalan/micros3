@@ -123,6 +123,13 @@ export function applyTimeouts(client, { requestTimeout = DEFAULT_REQUEST_TIMEOUT
   return client;
 }
 
+// Gives `client` the same bounds as `source`, when `source` has any. Used for
+// a second client that a check creates, such as one with other credentials.
+export function shareTimeouts(source, client) {
+  const limits = clientBounds.get(source);
+  return limits ? applyTimeouts(client, limits) : client;
+}
+
 // Bounds a request made outside the SDK (such as a raw HTTP request)
 // like one made through a client passed to applyTimeouts. `request(signal)`
 // must finish reading the response before it resolves. Without applied

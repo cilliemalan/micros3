@@ -170,6 +170,9 @@ export class S3Fixture {
     // Called as intercept(info, next) for every authenticated request; may
     // return a replacement { status, headers, body } to inject a defect.
     this.intercept = undefined;
+    // When set, a request with a wrong signature is served anyway (but still
+    // recorded with its problem), to inject a defect in signature checking.
+    this.ignoreSignatures = false;
   }
 
   async start(t) {
@@ -209,8 +212,9 @@ export class S3Fixture {
       try {
         const problem = signatureProblem(request, body);
         record.signature = problem ? problem[1] : 'valid';
-        if (problem) throw new S3Error(problem[0] === 'NotImplemented' ? 501 : problem[0] === 'XAmzContentSHA256Mismatch' ? 400 : 403, ...problem);
+        if (problem && !this.ignoreSignatures) throw new S3Error(problem[0] === 'NotImplemented' ? 501 : problem[0] === 'XAmzContentSHA256Mismatch' ? 400 : 403, ...problem);
         const info = this.describe(request, body);
+        info.signatureProblem = problem?.[1];
         record.operation = info.operation;
         const next = async () => this.dispatch(info);
         result = this.intercept ? await this.intercept(info, next) : await next();

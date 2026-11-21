@@ -6,7 +6,11 @@ Floci instance to validate the verifier before checking MicroS3. See
 [todo.md](todo.md) for the planned checks.
 
 The verifier first calls ListBuckets to check the S3 connection, then runs the
-operation checks in sequence and reports each result and a summary. Implemented
+operation checks in sequence and reports each result and a summary. An
+authentication check signs ListBuckets, GetObject, PutObject and DeleteObject
+requests with the configured access key ID but a wrong secret access key, and
+requires 403 `SignatureDoesNotMatch` for each, with rejected writes leaving the
+object unchanged or absent. Implemented
 checks cover bucket creation, listing, existence, location and deletion,
 including invalid names, repeat creation, missing buckets and non-empty buckets.
 Both object-listing APIs are checked for ordered keys and metadata, empty and
@@ -98,7 +102,7 @@ A `*` origin rule may answer with `*` or the request origin. Preflight `OPTIONS`
 `Access-Control-Allow-Credentials` and missing buckets are not checked. Encryption checks verify the SSE-S3 default
 configuration on a newly created bucket and the missing-bucket error. Changing
 encryption configuration is outside the planned scope. The longer checks (conditional requests, CORS headers on
-actual requests, and ListParts) are split into named scenarios, so a failure
+actual requests, ListParts and the wrong-secret check) are split into named scenarios, so a failure
 names the case that failed, as in `FAIL ListParts: wrong key: ...`. A connection error stops the run, and any
 connection or check failure gives a nonzero exit status.
 
@@ -148,7 +152,7 @@ never treated as proof that a resource is missing: an uncertain bucket
 creation is still cleaned up, and a bucket is retained when its multipart
 uploads cannot be listed and aborted.
 
-All suites run by default, in the order buckets, objects, listing, multipart,
+All suites run by default, in the order auth, buckets, objects, listing, multipart,
 cors, encryption. `--suite <name>` (or `-s`) runs only the named suite; repeat it
 or give a comma-separated list to run several, which still run in that order.
 An unknown name is rejected before any request is made. The initial ListBuckets

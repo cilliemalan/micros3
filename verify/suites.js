@@ -7,8 +7,10 @@ import multipartTests from './checks/multipart.js';
 import corsTests from './checks/cors.js';
 import corsBehaviorTests from './checks/cors-behavior.js';
 import encryptionTests from './checks/encryption.js';
+import signatureTests from './checks/signature.js';
 
 export const suites = [
+  { id: 'auth', name: 'Authentication', tests: signatureTests },
   { id: 'buckets', name: 'Bucket operations', tests: bucketTests },
   { id: 'objects', name: 'Object operations', tests: objectTests },
   { id: 'listing', name: 'Listing operations', tests: [...listingTests, ...listingEncodingTests] },

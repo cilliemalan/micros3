@@ -4,7 +4,7 @@ import { SuiteSelectionError, selectSuites, suites } from '../suites.js';
 
 test('suites have unique ids in design order and contain checks', () => {
   assert.deepEqual(suites.map(suite => suite.id),
-    ['buckets', 'objects', 'listing', 'multipart', 'cors', 'encryption']);
+    ['auth', 'buckets', 'objects', 'listing', 'multipart', 'cors', 'encryption']);
   for (const suite of suites) {
     assert.ok(suite.tests.length > 0, suite.id);
     for (const check of suite.tests) assert.equal(typeof check.run, 'function', check.name);
@@ -27,7 +27,7 @@ test('selection keeps run order, ignores case and duplicates, and accepts comma 
 test('an unknown or empty suite name is rejected with the valid names', () => {
   assert.throws(() => selectSuites(['bucket']), error =>
     error instanceof SuiteSelectionError &&
-    /Unknown suite "bucket"; expected one of: buckets, objects, listing, multipart, cors, encryption/
+    /Unknown suite "bucket"; expected one of: auth, buckets, objects, listing, multipart, cors, encryption/
       .test(error.message));
   assert.throws(() => selectSuites(['']), SuiteSelectionError);
   assert.throws(() => selectSuites(['cors,']), SuiteSelectionError);
