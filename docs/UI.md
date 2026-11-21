@@ -131,10 +131,11 @@ The client in `ui/src/api.ts` (U6) expects these JSON replies. Field names are c
 | `PUT .../object` | `{key, size, etag, lastModified}` |
 | `POST .../delete` | `{deleted: [key], errors: [{key, code, message}]}` |
 | `POST .../copy` | `{key, size, etag, lastModified}` of the destination |
+| `GET .../object` | The content, streamed, with the stored `Content-Type` (`binary/octet-stream` when none), `ETag`, `Last-Modified`, `X-Content-Type-Options: nosniff` and `Content-Disposition: attachment` naming the last segment of the key (RFC 5987 `filename*`, with an ASCII `filename` fallback) |
 | `GET .../cors` | The XML, as `application/xml` |
-| `GET .../uploads` | `{uploads: [{key, uploadId, initiated}], next?: {key, uploadId}}`. The next page is asked for with `keyMarker` and `uploadIdMarker` |
+| `GET .../uploads` | `{uploads: [{key, uploadId, initiated}], next?: {key, uploadId}}`. The next page is asked for with `keyMarker` and `uploadIdMarker`; `prefix` and `limit` (1 to 1,000) are optional |
 
-The UI does not need `ListObjects` v1, multipart upload creation, or part uploads. A large upload uses the single `PUT` above, up to the store's 5 GiB limit.
+The UI does not need `ListObjects` v1, multipart upload creation, or part uploads. A large upload uses the single `PUT` above, up to the store's 5 GiB limit. The object row is written only once the whole body has arrived, so an upload that is too large, cut short, or whose bucket is deleted meanwhile leaves no visible object and no staged file.
 
 ### Metadata edits (UI7)
 

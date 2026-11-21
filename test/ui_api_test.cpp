@@ -6,6 +6,7 @@
 #include "micros3/objects.h"
 #include "micros3/store.h"
 #include "micros3/ui_api.h"
+#include "micros3/uploads.h"
 
 #include "temp_dir.h"
 
@@ -16,6 +17,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <filesystem>
+#include <memory>
 #include <set>
 #include <vector>
 #include <optional>
@@ -35,7 +38,8 @@ protected:
     micros3::Store store{dir.path()};
     micros3::UiService service{store, kPort};
 
-    Response call(std::string method, std::string path, std::optional<std::string> body = std::nullopt) {
+    std::unique_ptr<micros3::http::Exchange> begin(std::string method, std::string path,
+                                                   micros3::http::Headers headers = {}) {
         Request request;
         request.method = std::move(method);
         const std::size_t q = path.find('?');
@@ -43,9 +47,30 @@ protected:
         if (q != std::string::npos) request.query = path.substr(q + 1);
         request.request_id = "TEST";
         request.headers.emplace_back("host", "localhost:3924");
-        auto exchange = service.begin(request);
+        for (auto &header : headers) request.headers.push_back(std::move(header));
+        return service.begin(request);
+    }
+
+    Response call(std::string method, std::string path, std::optional<std::string> body = std::nullopt,
+                  micros3::http::Headers headers = {}) {
+        auto exchange = begin(std::move(method), std::move(path), std::move(headers));
         if (body) exchange->on_data(*body);
         return exchange->on_end();
+    }
+
+    // The whole body of a response, from `body` or the streamed file.
+    static std::string content(const Response &response) {
+        if (!response.file) return response.body;
+        std::string out(response.file->length(), '\0');
+        EXPECT_EQ(response.file->read(0, out.data(), out.size()), out.size());
+        return out;
+    }
+
+    // Files left in the store's staging directory.
+    std::size_t staged_files() {
+        std::size_t count = 0;
+        for ([[maybe_unused]] const auto &entry : std::filesystem::directory_iterator(dir.path() / "staging")) ++count;
+        return count;
     }
 
     static json parse(const Response &response) { return json::parse(response.body); }
@@ -556,6 +581,221 @@ TEST_F(UiApi, CopyErrors) {
                  "InvalidRequest");
     EXPECT_TRUE(micros3::objects::find(store, "photos", "a"));
     expect_error(call("GET", path), 405, "MethodNotAllowed");
+}
+
+TEST_F(UiApi, UploadAndDownload) {
+    make_bucket("photos");
+    for (const std::string &key : kAwkwardKeys) {
+        const std::string data = "content of " + key;
+        const Response put = call("PUT", "/api/buckets/photos/object?key=" + enc(key), data,
+                                  {{"content-type", "text/plain"},
+                                   {"cache-control", "max-age=60"},
+                                   {"x-amz-meta-owner", "me"},
+                                   {"content-language", "en"}});
+        ASSERT_EQ(put.status, 200) << key << ": " << put.body;
+        const json body = parse(put);
+        EXPECT_EQ(body["key"], key);
+        EXPECT_EQ(body["size"], data.size());
+        const auto object = micros3::objects::find(store, "photos", key);
+        ASSERT_TRUE(object) << key;
+        EXPECT_EQ(body["etag"], object->etag);
+        EXPECT_EQ(object->etag.size(), 34u);
+        EXPECT_EQ(body["lastModified"], micros3::clock::iso8601(object->last_modified_ms));
+        // Only Content-Type, Cache-Control and x-amz-meta-* are stored.
+        EXPECT_EQ(object->headers, (micros3::http::Headers{{"Cache-Control", "max-age=60"},
+                                                           {"Content-Type", "text/plain"},
+                                                           {"x-amz-meta-owner", "me"}}));
+
+        const Response get = call("GET", "/api/buckets/photos/object?key=" + enc(key));
+        ASSERT_EQ(get.status, 200) << key;
+        EXPECT_EQ(content(get), data);
+        EXPECT_EQ(header(get, "Content-Type"), "text/plain");
+        EXPECT_EQ(header(get, "ETag"), object->etag);
+        EXPECT_EQ(header(get, "X-Content-Type-Options"), "nosniff");
+        const auto disposition = header(get, "Content-Disposition");
+        ASSERT_TRUE(disposition);
+        EXPECT_EQ(disposition->rfind("attachment; filename=\"", 0), 0u) << *disposition;
+        for (unsigned char c : *disposition) EXPECT_TRUE(c >= 0x20 && c < 0x7f) << *disposition;
+    }
+    EXPECT_EQ(staged_files(), 0u);
+}
+
+TEST_F(UiApi, DownloadFileName) {
+    make_bucket("photos");
+    const std::string key = "dir/caf\xc3\xa9 \"1\" 100%.txt";
+    ASSERT_EQ(call("PUT", "/api/buckets/photos/object?key=" + enc(key), "x").status, 200);
+    const Response get = call("GET", "/api/buckets/photos/object?key=" + enc(key));
+    EXPECT_EQ(header(get, "Content-Disposition"),
+              "attachment; filename=\"caf__ _1_ 100%.txt\"; filename*=UTF-8''caf%C3%A9%20%221%22%20100%25.txt");
+    EXPECT_EQ(header(get, "Content-Type"), "binary/octet-stream");
+}
+
+TEST_F(UiApi, HeadObjectHasNoBody) {
+    make_bucket("photos");
+    ASSERT_EQ(call("PUT", "/api/buckets/photos/object?key=a", "hello").status, 200);
+    const Response head = call("HEAD", "/api/buckets/photos/object?key=a");
+    EXPECT_EQ(head.status, 200);
+    EXPECT_FALSE(head.file);
+    EXPECT_TRUE(head.body.empty());
+    EXPECT_EQ(head.reported_length, 5u);
+}
+
+TEST_F(UiApi, UploadReplacesAnObject) {
+    make_bucket("photos");
+    ASSERT_EQ(call("PUT", "/api/buckets/photos/object?key=a", "first", {{"x-amz-meta-v", "1"}}).status, 200);
+    const std::string old_blob = micros3::objects::find(store, "photos", "a")->blob_id;
+    ASSERT_EQ(call("PUT", "/api/buckets/photos/object?key=a", "second").status, 200);
+    const auto object = micros3::objects::find(store, "photos", "a");
+    EXPECT_EQ(object->size, 6u);
+    EXPECT_TRUE(object->headers.empty());
+    EXPECT_FALSE(std::filesystem::exists(store.blob_path(old_blob)));
+    EXPECT_EQ(content(call("GET", "/api/buckets/photos/object?key=a")), "second");
+}
+
+TEST_F(UiApi, UploadInChunksAndEmpty) {
+    make_bucket("photos");
+    auto exchange = begin("PUT", "/api/buckets/photos/object?key=big");
+    std::string expected;
+    for (int i = 0; i < 100; ++i) {
+        const std::string chunk(1000, static_cast<char>('a' + i % 26));
+        exchange->on_data(chunk);
+        expected += chunk;
+    }
+    ASSERT_EQ(exchange->on_end().status, 200);
+    EXPECT_EQ(content(call("GET", "/api/buckets/photos/object?key=big")), expected);
+
+    // A folder marker: a zero-byte object whose key ends in `/`.
+    ASSERT_EQ(call("PUT", "/api/buckets/photos/object?key=" + enc("folder/")).status, 200);
+    EXPECT_EQ(micros3::objects::find(store, "photos", "folder/")->size, 0u);
+    EXPECT_EQ(header(call("GET", "/api/buckets/photos/object?key=" + enc("folder/")), "Content-Disposition"),
+              "attachment; filename=\"folder\"; filename*=UTF-8''folder");
+}
+
+TEST_F(UiApi, FailedUploadLeavesNoObject) {
+    make_bucket("photos");
+    store.set_max_body_bytes(10);
+
+    // Too large by Content-Length: refused before the body.
+    expect_error(call("PUT", "/api/buckets/photos/object?key=a", "x", {{"content-length", "11"}}), 400,
+                 "EntityTooLarge");
+    // Too large as it streams (no Content-Length, as with a chunked body).
+    expect_error(call("PUT", "/api/buckets/photos/object?key=a", std::string(11, 'x')), 400, "EntityTooLarge");
+    EXPECT_FALSE(micros3::objects::find(store, "photos", "a"));
+    EXPECT_EQ(staged_files(), 0u);
+
+    // The client goes away mid-body.
+    {
+        auto exchange = begin("PUT", "/api/buckets/photos/object?key=a");
+        exchange->on_data("12345");
+        exchange->on_abort();
+    }
+    EXPECT_FALSE(micros3::objects::find(store, "photos", "a"));
+    EXPECT_EQ(staged_files(), 0u);
+
+    // A failed replacement keeps the old object.
+    ASSERT_EQ(call("PUT", "/api/buckets/photos/object?key=a", "old").status, 200);
+    expect_error(call("PUT", "/api/buckets/photos/object?key=a", std::string(11, 'x')), 400, "EntityTooLarge");
+    EXPECT_EQ(content(call("GET", "/api/buckets/photos/object?key=a")), "old");
+    EXPECT_EQ(staged_files(), 0u);
+
+    // The bucket is deleted while the body is uploading.
+    {
+        auto exchange = begin("PUT", "/api/buckets/photos/object?key=b");
+        exchange->on_data("12");
+        ASSERT_EQ(micros3::buckets::empty(store, "photos"), micros3::buckets::EmptyResult::Emptied);
+        ASSERT_EQ(micros3::buckets::remove(store, "photos"), micros3::buckets::DeleteResult::Deleted);
+        expect_error(exchange->on_end(), 404, "NoSuchBucket");
+    }
+    EXPECT_EQ(staged_files(), 0u);
+    std::size_t blobs = 0;
+    for ([[maybe_unused]] const auto &entry : std::filesystem::directory_iterator(dir.path() / "blobs")) ++blobs;
+    EXPECT_EQ(blobs, 0u);
+}
+
+TEST_F(UiApi, ObjectErrors) {
+    expect_error(call("PUT", "/api/buckets/nope/object?key=a", "x"), 404, "NoSuchBucket");
+    expect_error(call("GET", "/api/buckets/nope/object?key=a"), 404, "NoSuchBucket");
+    make_bucket("photos");
+    expect_error(call("GET", "/api/buckets/photos/object?key=a"), 404, "NoSuchKey");
+    expect_error(call("PUT", "/api/buckets/photos/object", "x"), 400, "InvalidArgument");
+    expect_error(call("PUT", "/api/buckets/photos/object?key=", "x"), 400, "InvalidArgument");
+    expect_error(call("PUT", "/api/buckets/photos/object?key=" + std::string(1025, 'k'), "x"), 400,
+                 "KeyTooLongError");
+    expect_error(call("PUT", "/api/buckets/photos/object?key=%zz", "x"), 400, "InvalidURI");
+    expect_error(call("PUT", "/api/buckets/photos/object?key=a", "x", {{"x-amz-meta-big", std::string(2100, 'v')}}),
+                 400, "MetadataTooLarge");
+    expect_error(call("DELETE", "/api/buckets/photos/object?key=a"), 405, "MethodNotAllowed");
+    expect_error(call("POST", "/api/buckets/photos/object?key=a", "x"), 405, "MethodNotAllowed");
+    EXPECT_FALSE(micros3::objects::find(store, "photos", "a"));
+}
+
+TEST_F(UiApi, ListAndAbortUploads) {
+    make_bucket("photos");
+    std::vector<std::string> ids;
+    const std::vector<std::string> keys = {"b/two", "a one", "b/two", "c<script>"};
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        micros3::uploads::Upload upload;
+        upload.bucket = "photos";
+        upload.key = keys[i];
+        upload.initiated_ms = 1700000000000 + static_cast<std::int64_t>(i);
+        upload.upload_id = micros3::uploads::new_upload_id(upload.initiated_ms);
+        ASSERT_TRUE(micros3::uploads::create(store, upload));
+        ids.push_back(upload.upload_id);
+    }
+
+    json body = parse(call("GET", "/api/buckets/photos/uploads"));
+    ASSERT_EQ(body["uploads"].size(), 4u);
+    EXPECT_EQ(body["uploads"][0]["key"], "a one");
+    EXPECT_EQ(body["uploads"][0]["uploadId"], ids[1]);
+    EXPECT_EQ(body["uploads"][0]["initiated"], micros3::clock::iso8601(1700000000001));
+    EXPECT_EQ(body["uploads"][1]["uploadId"], ids[0]);
+    EXPECT_EQ(body["uploads"][2]["uploadId"], ids[2]);
+    EXPECT_EQ(body["uploads"][3]["key"], "c<script>");
+    EXPECT_FALSE(body.contains("next"));
+
+    // Paging.
+    body = parse(call("GET", "/api/buckets/photos/uploads?limit=2"));
+    ASSERT_EQ(body["uploads"].size(), 2u);
+    ASSERT_TRUE(body.contains("next"));
+    EXPECT_EQ(body["next"]["key"], "b/two");
+    EXPECT_EQ(body["next"]["uploadId"], ids[0]);
+    body = parse(call("GET", "/api/buckets/photos/uploads?limit=2&keyMarker=" + enc("b/two") +
+                                 "&uploadIdMarker=" + ids[0]));
+    ASSERT_EQ(body["uploads"].size(), 2u);
+    EXPECT_EQ(body["uploads"][0]["uploadId"], ids[2]);
+    EXPECT_EQ(body["uploads"][1]["uploadId"], ids[3]);
+    EXPECT_FALSE(body.contains("next"));
+
+    // Abort one.
+    const Response aborted =
+        call("DELETE", "/api/buckets/photos/uploads?key=" + enc("b/two") + "&uploadId=" + ids[2]);
+    EXPECT_EQ(aborted.status, 204) << aborted.body;
+    EXPECT_FALSE(micros3::uploads::find(store, "photos", "b/two", ids[2]));
+    EXPECT_TRUE(micros3::uploads::find(store, "photos", "b/two", ids[0]));
+    EXPECT_EQ(parse(call("GET", "/api/buckets/photos/uploads"))["uploads"].size(), 3u);
+}
+
+TEST_F(UiApi, UploadsErrors) {
+    expect_error(call("GET", "/api/buckets/nope/uploads"), 404, "NoSuchBucket");
+    expect_error(call("DELETE", "/api/buckets/nope/uploads?key=a&uploadId=x"), 404, "NoSuchBucket");
+    make_bucket("photos");
+    micros3::uploads::Upload upload;
+    upload.bucket = "photos";
+    upload.key = "a";
+    upload.initiated_ms = 1700000000000;
+    upload.upload_id = micros3::uploads::new_upload_id(upload.initiated_ms);
+    ASSERT_TRUE(micros3::uploads::create(store, upload));
+    expect_error(call("DELETE", "/api/buckets/photos/uploads?key=a&uploadId=nope"), 404, "NoSuchUpload");
+    // The upload belongs to its key.
+    expect_error(call("DELETE", "/api/buckets/photos/uploads?key=b&uploadId=" + upload.upload_id), 404,
+                 "NoSuchUpload");
+    expect_error(call("DELETE", "/api/buckets/photos/uploads?uploadId=" + upload.upload_id), 400, "InvalidArgument");
+    expect_error(call("DELETE", "/api/buckets/photos/uploads?key=a"), 400, "InvalidArgument");
+    expect_error(call("GET", "/api/buckets/photos/uploads?limit=0"), 400, "InvalidArgument");
+    expect_error(call("GET", "/api/buckets/photos/uploads?limit=1001"), 400, "InvalidArgument");
+    expect_error(call("GET", "/api/buckets/photos/uploads?limit=x"), 400, "InvalidArgument");
+    expect_error(call("POST", "/api/buckets/photos/uploads"), 405, "MethodNotAllowed");
+    EXPECT_TRUE(micros3::uploads::find(store, "photos", "a", upload.upload_id));
 }
 
 } // namespace

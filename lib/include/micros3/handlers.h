@@ -101,8 +101,9 @@ protected:
     virtual http::Response commit(objects::StagedBlob &blob, const digest::Md5Digest &md5) = 0;
     // Adds the checksum headers the request asked for to a success response.
     void add_checksum_headers(http::Response &response) const;
-    // An error response for this request.
-    http::Response error(const S3Error &e) const { return http::error_response(e, request_); }
+    // An error response for this request. XML by default; the UI API
+    // overrides it to answer in JSON.
+    virtual http::Response error(const S3Error &e) const { return http::error_response(e, request_); }
 
     Store &store_;
 

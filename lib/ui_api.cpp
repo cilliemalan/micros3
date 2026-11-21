@@ -3,16 +3,22 @@
 #include "micros3/buckets.h"
 #include "micros3/clock.h"
 #include "micros3/cors.h"
+#include "micros3/digest.h"
+#include "micros3/handlers.h"
 #include "micros3/listing.h"
 #include "micros3/objects.h"
 #include "micros3/store.h"
+#include "micros3/uploads.h"
 #include "micros3/url.h"
 
 #include <nlohmann/json.hpp>
 
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <cctype>
+#include <cerrno>
 #include <cstdint>
 #include <functional>
 #include <set>
@@ -504,6 +510,190 @@ http::Response copy_object(Store &store, const std::string &bucket, const std::s
     return ui::json_response(200, dump(reply));
 }
 
+// The headers a UI upload stores: Content-Type, Cache-Control and
+// x-amz-meta-*. Other metadata headers are set afterwards through `meta`.
+http::Headers upload_metadata(const http::Request &request) {
+    http::Headers stored;
+    for (auto &[name, value] : objects::metadata_from(request)) {
+        if (name == "Content-Type" || name == "Cache-Control" || name.rfind("x-amz-meta-", 0) == 0) {
+            stored.emplace_back(std::move(name), std::move(value));
+        }
+    }
+    return stored;
+}
+
+// Streams an upload body into staging/, then stores it as the object. The
+// object row is written only once the whole body has arrived, so a body cut
+// short or too large leaves no visible object.
+class UploadExchange : public handlers::StagedBodyExchange {
+public:
+    UploadExchange(Store &store, const http::Request &request, std::string bucket, std::string key,
+                   http::Headers metadata)
+        : StagedBodyExchange(store, request, handlers::ExpectedDigests{}), bucket_(std::move(bucket)),
+          key_(std::move(key)), metadata_(std::move(metadata)) {}
+
+protected:
+    http::Response error(const S3Error &e) const override { return ui::json_error(e.status, e.code, e.message); }
+
+    http::Response commit(objects::StagedBlob &blob, const digest::Md5Digest &md5) override {
+        objects::Object object;
+        object.bucket = bucket_;
+        object.key = key_;
+        object.size = blob.size();
+        object.etag = "\"" + digest::hex(md5) + "\"";
+        object.last_modified_ms = clock::now_ms();
+        object.headers = std::move(metadata_);
+        try {
+            object.blob_id = blob.commit();
+        } catch (const std::system_error &) {
+            return error(internal_error());
+        }
+        std::optional<std::string> replaced;
+        objects::PutResult result;
+        try {
+            result = objects::put(store_, object, replaced);
+        } catch (...) {
+            objects::remove_blob(store_, object.blob_id);
+            throw;
+        }
+        if (result == objects::PutResult::NoSuchBucket) {
+            // The bucket was deleted while the body was uploading.
+            objects::remove_blob(store_, object.blob_id);
+            return error(no_such_bucket());
+        }
+        if (replaced) objects::remove_blob(store_, *replaced);
+        return ui::json_response(200, dump(summary_json(object)));
+    }
+
+private:
+    std::string bucket_;
+    std::string key_;
+    http::Headers metadata_;
+};
+
+ExchangePtr put_object(Store &store, const http::Request &request, const std::string &bucket, std::string key) {
+    http::Headers metadata = upload_metadata(request);
+    for (const auto &[name, value] : metadata) {
+        if (!valid_header_value(value)) {
+            return fixed(error(invalid_argument("The value of the header \"" + name + "\" holds a control character.")));
+        }
+    }
+    if (objects::user_metadata_bytes(metadata) > objects::kMaxUserMetadataBytes) {
+        return fixed(
+            error({400, "MetadataTooLarge", "Your metadata headers exceed the maximum allowed metadata size."}));
+    }
+    if (auto e = handlers::check_content_length(store, request)) return fixed(error(*e));
+    if (!buckets::find(store, bucket)) return fixed(error(no_such_bucket()));
+    return std::make_unique<UploadExchange>(store, request, bucket, std::move(key), std::move(metadata));
+}
+
+// The file name part of a key: what follows the last `/`, or the whole key
+// when that is empty.
+std::string file_name(const std::string &key) {
+    std::string name = key;
+    while (!name.empty() && name.back() == '/') name.pop_back();
+    if (const std::size_t slash = name.rfind('/'); slash != std::string::npos) name.erase(0, slash + 1);
+    return name.empty() ? "download" : name;
+}
+
+// `attachment` with the file name as RFC 6266 and RFC 5987 say: a plain ASCII
+// `filename` for old clients, and the exact name as UTF-8 in `filename*`.
+std::string attachment(const std::string &key) {
+    const std::string name = file_name(key);
+    std::string ascii;
+    std::string encoded;
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    for (unsigned char c : name) {
+        ascii.push_back(c >= 0x20 && c < 0x7f && c != '"' && c != '\\' ? static_cast<char>(c) : '_');
+        const bool attr_char = (c >= '0' && c <= '9') || ((c | 0x20) >= 'a' && (c | 0x20) <= 'z') ||
+                               std::string_view("!#$&+-.^_`|~").find(static_cast<char>(c)) != std::string_view::npos;
+        if (attr_char) {
+            encoded.push_back(static_cast<char>(c));
+        } else {
+            encoded.push_back('%');
+            encoded.push_back(kHex[c >> 4]);
+            encoded.push_back(kHex[c & 0xf]);
+        }
+    }
+    return "attachment; filename=\"" + ascii + "\"; filename*=UTF-8''" + encoded;
+}
+
+http::Response get_object(Store &store, const std::string &bucket, const std::string &key, bool with_body) {
+    const auto object = objects::find(store, bucket, key);
+    if (!object) {
+        if (!buckets::find(store, bucket)) return error(no_such_bucket());
+        return error(no_such_key());
+    }
+    http::Response response;
+    std::string type = "binary/octet-stream";
+    for (const auto &[name, value] : object->headers) {
+        if (name == "Content-Type") type = value;
+    }
+    response.set_header("Content-Type", type);
+    // Never rendered on the UI origin, whatever its type.
+    response.set_header("Content-Disposition", attachment(object->key));
+    response.set_header("X-Content-Type-Options", "nosniff");
+    response.set_header("Cache-Control", "no-store");
+    response.set_header("ETag", object->etag);
+    response.set_header("Last-Modified", clock::http_date(object->last_modified_ms));
+    if (!with_body) {
+        response.reported_length = object->size;
+        return response;
+    }
+    const std::filesystem::path path = store.blob_path(object->blob_id);
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return error(internal_error());
+    response.file = std::make_shared<http::FileBody>(fd, 0, object->size);
+    return response;
+}
+
+S3Error no_such_upload() {
+    return {404, "NoSuchUpload",
+            "The specified upload does not exist. The upload ID may be invalid, or the upload may have been "
+            "aborted or completed."};
+}
+
+http::Response list_uploads(Store &store, const std::string &bucket, const url::Query &query) {
+    uploads::ListRequest request;
+    request.prefix = query.get("prefix").value_or("");
+    request.key_marker = query.get("keyMarker").value_or("");
+    request.upload_id_marker = query.get("uploadIdMarker").value_or("");
+    if (const auto limit = query.get("limit"); limit && !limit->empty()) {
+        std::size_t value = 0;
+        for (char c : *limit) {
+            if (c < '0' || c > '9' || value > uploads::kMaxListing) {
+                return error(invalid_argument("The \"limit\" must be a whole number from 1 to 1000."));
+            }
+            value = value * 10 + static_cast<std::size_t>(c - '0');
+        }
+        if (value < 1 || value > uploads::kMaxListing) {
+            return error(invalid_argument("The \"limit\" must be a whole number from 1 to 1000."));
+        }
+        request.max_uploads = value;
+    }
+    const auto page = uploads::list(store, bucket, request);
+    if (!page) return error(no_such_bucket());
+    nlohmann::json list = nlohmann::json::array();
+    for (const uploads::ListEntry &entry : page->entries) {
+        list.push_back({{"key", entry.key},
+                        {"uploadId", entry.upload_id},
+                        {"initiated", clock::iso8601(entry.initiated_ms)}});
+    }
+    nlohmann::json body = {{"uploads", std::move(list)}};
+    if (page->truncated && !page->entries.empty()) {
+        body["next"] = {{"key", page->entries.back().key}, {"uploadId", page->entries.back().upload_id}};
+    }
+    return ui::json_response(200, dump(body));
+}
+
+http::Response abort_upload(Store &store, const std::string &bucket, const std::string &key,
+                            const std::string &upload_id) {
+    if (!buckets::find(store, bucket)) return error(no_such_bucket());
+    const auto upload = uploads::find(store, bucket, key, upload_id);
+    if (!upload || uploads::abort(store, *upload) == uploads::Result::NoSuchUpload) return error(no_such_upload());
+    return no_content();
+}
+
 // The decoded segments of a path under /api/, or nullopt when an escape is
 // malformed. "/api/buckets/a%20b" gives {"buckets", "a b"}.
 std::optional<std::vector<std::string>> api_segments(std::string_view rest) {
@@ -576,6 +766,31 @@ std::unique_ptr<http::Exchange> UiService::begin(const http::Request &request) {
             if (get) return fixed(get_meta(store, bucket, object_key));
             return std::make_unique<JsonBodyExchange>([&store, bucket, object_key](std::string body) {
                 return put_meta(store, bucket, object_key, body);
+            });
+        }
+        if (n == 3 && sub == "object") {
+            if (!get && method != "PUT") return fixed(method_not_allowed());
+            const auto query = url::Query::parse(request.query);
+            if (!query) return fixed(error(invalid_uri()));
+            auto key = key_param(*query);
+            if (auto *e = std::get_if<S3Error>(&key)) return fixed(error(*e));
+            std::string object_key = std::move(std::get<std::string>(key));
+            if (get) return fixed(get_object(store, bucket, object_key, method == "GET"));
+            return put_object(store, request, bucket, std::move(object_key));
+        }
+        if (n == 3 && sub == "uploads") {
+            if (!get && method != "DELETE") return fixed(method_not_allowed());
+            const auto query = url::Query::parse(request.query);
+            if (!query) return fixed(error(invalid_uri()));
+            if (get) return fixed(list_uploads(store, bucket, *query));
+            auto key = key_param(*query);
+            if (auto *e = std::get_if<S3Error>(&key)) return fixed(error(*e));
+            const auto upload_id = query->get("uploadId");
+            if (!upload_id || upload_id->empty()) {
+                return fixed(error(invalid_argument("The request must name an upload in an \"uploadId\" query parameter.")));
+            }
+            return after_body([&store, bucket, object_key = std::get<std::string>(key), id = *upload_id] {
+                return abort_upload(store, bucket, object_key, id);
             });
         }
         if (n == 3 && sub == "delete") {
