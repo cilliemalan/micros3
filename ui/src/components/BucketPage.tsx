@@ -8,7 +8,9 @@ import { api, isApiError, type BucketDetails } from "../api"
 import { TABS, bucketRoute, navigate, type Tab } from "../route"
 import { Breadcrumb } from "./Breadcrumb"
 import { TrashIcon } from "./Icons"
+import { SettingsTab } from "./SettingsTab"
 import { TopBar } from "./TopBar"
+import { UploadsTab } from "./UploadsTab"
 
 const TAB_LABELS: Record<Tab, string> = { objects: "Objects", uploads: "Uploads", settings: "Settings" }
 
@@ -99,10 +101,10 @@ export function BucketPage({
               <p className="muted">The object browser is not built yet.</p>
             </TabsPanel>
             <TabsPanel value="uploads" className="page">
-              <p className="muted">Uploads in progress will be listed here.</p>
+              {tab === "uploads" && <UploadsTab bucket={bucket} />}
             </TabsPanel>
             <TabsPanel value="settings" className="page">
-              <p className="muted">Bucket settings will be shown here.</p>
+              {tab === "settings" && current?.details && <SettingsTab details={current.details} />}
             </TabsPanel>
           </>
         )}

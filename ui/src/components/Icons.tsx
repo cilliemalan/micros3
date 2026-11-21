@@ -73,3 +73,15 @@ export const RefreshIcon = () => (
     <path d="M20 12a8 8 0 1 1-2.3-5.7L20 8.6M20 4v4.6h-4.6" />
   </Icon>
 )
+
+export const CheckIcon = () => (
+  <Icon>
+    <path d="m5 12 5 5 9-10" />
+  </Icon>
+)
+
+export const XIcon = () => (
+  <Icon>
+    <path d="M6 6l12 12M18 6 6 18" />
+  </Icon>
+)
