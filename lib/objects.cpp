@@ -1,5 +1,7 @@
 #include "micros3/objects.h"
 
+#include "micros3/clock.h"
+
 #include <nlohmann/json.hpp>
 
 #include <fcntl.h>
@@ -187,6 +189,53 @@ DeleteResult remove_many(Store &store, std::string_view bucket, const std::vecto
     }
     for (const std::string &blob : blobs) remove_blob(store, blob);
     return DeleteResult::Deleted;
+}
+
+CopyResult copy(Store &store, const Object &source, std::string_view bucket, std::string_view key,
+                const std::optional<http::Headers> &headers, Object &copied) {
+    // Each blob has one owner, so the copy gets a blob of its own.
+    StagedBlob blob(store);
+    blob.copy_from(store.blob_path(source.blob_id));
+    Object object = source;
+    object.bucket = std::string(bucket);
+    object.key = std::string(key);
+    object.size = blob.size();
+    object.last_modified_ms = clock::now_ms();
+    if (headers) object.headers = *headers;
+    object.blob_id = blob.commit();
+    std::optional<std::string> replaced;
+    PutResult result;
+    try {
+        result = put(store, object, replaced);
+    } catch (...) {
+        remove_blob(store, object.blob_id);
+        throw;
+    }
+    if (result == PutResult::NoSuchBucket) {
+        remove_blob(store, object.blob_id);
+        return CopyResult::NoSuchBucket;
+    }
+    if (replaced) remove_blob(store, *replaced);
+    copied = std::move(object);
+    return CopyResult::Copied;
+}
+
+UpdateResult update_headers(Store &store, std::string_view bucket, std::string_view key,
+                            const http::Headers &headers) {
+    db::Transaction txn(store.db());
+    {
+        db::Statement exists = store.db().prepare("SELECT 1 FROM buckets WHERE name = ?");
+        exists.bind_text(1, bucket);
+        if (!exists.step()) return UpdateResult::NoSuchBucket;
+    }
+    {
+        db::Statement update =
+            store.db().prepare("UPDATE objects SET headers = ? WHERE bucket = ? AND key = ? RETURNING 1");
+        update.bind_text(1, headers_to_json(headers)).bind_text(2, bucket).bind_blob(3, key);
+        if (!update.step()) return UpdateResult::NoSuchKey;
+    }
+    txn.commit();
+    return UpdateResult::Updated;
 }
 
 std::string new_blob_id() {

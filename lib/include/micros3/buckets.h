@@ -47,4 +47,12 @@ enum class DeleteResult { Deleted, NoSuchBucket, NotEmpty };
 // their parts (D1). The part blob files are removed after the commit.
 DeleteResult remove(Store &store, std::string_view name);
 
+enum class EmptyResult { Emptied, NoSuchBucket };
+
+// Deletes every object in a bucket, in batches of `kEmptyBatch` keys, then
+// its multipart uploads and their parts. The bucket itself stays. Blob files
+// are removed after each commit.
+inline constexpr std::size_t kEmptyBatch = 1000;
+EmptyResult empty(Store &store, std::string_view name);
+
 } // namespace micros3::buckets

@@ -97,7 +97,7 @@ The UI service is an `http::Service`, like the S3 service. It reuses the same re
 | POST | `/api/buckets` | Create a bucket, body `{name, region}` | `buckets::valid_name`, `buckets::create` |
 | GET | `/api/buckets/{bucket}` | Bucket details: region, creation time, default encryption, whether CORS is set | `buckets::find`, `cors::load` |
 | DELETE | `/api/buckets/{bucket}` | Delete an empty bucket. Answers 409 `BucketNotEmpty` otherwise | `buckets::remove` |
-| POST | `/api/buckets/{bucket}/empty` | Delete all objects and uploads, in batches | `objects::remove_many`, uploads |
+| POST | `/api/buckets/{bucket}/empty` | Delete all objects and uploads, in batches | `buckets::empty` |
 | GET | `/api/buckets/{bucket}/objects` | List one level: `prefix`, `delimiter=/`, `after`, `limit`. Returns folders, objects and a continuation value | `listing::list` |
 | PUT | `/api/buckets/{bucket}/object?key=` | Upload a file. The raw body is the content. Headers `Content-Type`, `Cache-Control` and `x-amz-meta-*` are stored | `StagedBlob`, `objects::metadata_from`, `objects::put` |
 | GET | `/api/buckets/{bucket}/object?key=` | Download the content, streamed from the blob file | `objects::find`, `FileBody` |
@@ -122,7 +122,7 @@ The UI does not need `ListObjects` v1, multipart upload creation, or part upload
 Some of the logic the routes need is currently inside the S3 handlers. It moves into library functions that both the S3 handlers and the UI service call, so S3 behavior does not change:
 
 - `objects::copy`, from `copy_object` in `lib/object_handlers.cpp`.
-- The "empty bucket" loop, which the bucket removal path also needs for uploads.
+- `buckets::empty`, the "empty bucket" loop. It shares the upload and part removal with `buckets::remove`.
 - `objects::update_headers`, a new function for UI7.
 
 After this refactor the full `verify` run must still pass, unchanged.

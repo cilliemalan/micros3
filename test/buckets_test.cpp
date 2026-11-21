@@ -119,6 +119,41 @@ TEST(Buckets, RemoveDeletesUploadsPartsAndPartBlobs) {
     EXPECT_EQ(db.query_text("SELECT count(*) FROM parts"), "1");
 }
 
+TEST(Buckets, EmptyDeletesObjectsUploadsAndBlobsInBatches) {
+    TempDir tmp;
+    Store store(tmp.path());
+    EXPECT_EQ(buckets::empty(store, "nope"), buckets::EmptyResult::NoSuchBucket);
+    buckets::create(store, "full", "us-east-1", 0);
+    buckets::create(store, "other", "us-east-1", 0);
+    auto &db = store.db();
+    const std::size_t count = buckets::kEmptyBatch * 2 + 5;
+    db.exec("BEGIN");
+    for (std::size_t i = 0; i < count; ++i) {
+        const std::string blob = "o" + std::to_string(i);
+        db.prepare("INSERT INTO objects VALUES ('full', ?, ?, 1, 'e', 0, '{}')")
+            .bind_blob(1, "k" + std::to_string(i))
+            .bind_text(2, blob)
+            .run();
+    }
+    db.exec("COMMIT");
+    db.exec("INSERT INTO objects VALUES ('other', 'k', 'keep', 1, 'e', 0, '{}');"
+            "INSERT INTO uploads VALUES ('u1', 'full', 'k', 0, '{}');"
+            "INSERT INTO uploads VALUES ('u2', 'other', 'k', 0, '{}');"
+            "INSERT INTO parts VALUES ('u1', 1, 'p1', 1, 'e', 0);"
+            "INSERT INTO parts VALUES ('u2', 1, 'p2', 1, 'e', 0);");
+    for (const char *blob : {"o0", "o2004", "keep", "p1", "p2"}) std::ofstream(store.blob_path(blob)) << "x";
+
+    EXPECT_EQ(buckets::empty(store, "full"), buckets::EmptyResult::Emptied);
+    EXPECT_TRUE(buckets::find(store, "full"));
+    EXPECT_EQ(db.query_text("SELECT count(*) FROM objects WHERE bucket = 'full'"), "0");
+    EXPECT_EQ(db.query_text("SELECT count(*) FROM objects"), "1");
+    EXPECT_EQ(db.query_text("SELECT count(*) FROM uploads"), "1");
+    EXPECT_EQ(db.query_text("SELECT count(*) FROM parts"), "1");
+    for (const char *blob : {"o0", "o2004", "p1"}) EXPECT_FALSE(fs::exists(store.blob_path(blob))) << blob;
+    for (const char *blob : {"keep", "p2"}) EXPECT_TRUE(fs::exists(store.blob_path(blob))) << blob;
+    EXPECT_EQ(buckets::remove(store, "full"), buckets::DeleteResult::Deleted);
+}
+
 TEST(Buckets, OldSchemaGainsRegionColumn) {
     TempDir tmp;
     {

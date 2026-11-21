@@ -102,6 +102,77 @@ TEST(ObjectStore, MissingBucket) {
     EXPECT_EQ(objects::remove(f.store, "missing", "k"), objects::DeleteResult::NoSuchBucket);
 }
 
+TEST(ObjectStore, CopyGetsItsOwnBlob) {
+    Fixture f;
+    f.store.db().exec("INSERT INTO buckets (name, created_ms) VALUES ('other', 0)");
+    std::ofstream(f.store.blob_path("src")) << "abc";
+    std::optional<std::string> replaced;
+    ASSERT_EQ(objects::put(f.store, make_object("src", "src"), replaced), objects::PutResult::Stored);
+    std::ofstream(f.store.blob_path("old")) << "old";
+    objects::Object existing = make_object("dst", "old");
+    existing.bucket = "other";
+    ASSERT_EQ(objects::put(f.store, existing, replaced), objects::PutResult::Stored);
+
+    const auto source = objects::find(f.store, "bucket", "src");
+    ASSERT_TRUE(source);
+    objects::Object copied;
+    ASSERT_EQ(objects::copy(f.store, *source, "other", "dst", std::nullopt, copied), objects::CopyResult::Copied);
+    EXPECT_EQ(copied.bucket, "other");
+    EXPECT_EQ(copied.key, "dst");
+    EXPECT_NE(copied.blob_id, "src");
+    EXPECT_EQ(copied.etag, source->etag);
+    EXPECT_EQ(copied.headers, source->headers);
+    EXPECT_GT(copied.last_modified_ms, source->last_modified_ms);
+    EXPECT_EQ(read_file(f.store.blob_path(copied.blob_id)), "abc");
+    EXPECT_EQ(read_file(f.store.blob_path("src")), "abc");
+    EXPECT_FALSE(fs::exists(f.store.blob_path("old"))); // the replaced row's blob
+    const auto found = objects::find(f.store, "other", "dst");
+    ASSERT_TRUE(found);
+    EXPECT_EQ(found->blob_id, copied.blob_id);
+
+    const http::Headers replacement = {{"Content-Type", "image/png"}};
+    ASSERT_EQ(objects::copy(f.store, *source, "bucket", "src", replacement, copied), objects::CopyResult::Copied);
+    EXPECT_EQ(objects::find(f.store, "bucket", "src")->headers, replacement);
+    EXPECT_FALSE(fs::exists(f.store.blob_path("src")));
+}
+
+TEST(ObjectStore, CopyToMissingBucketLeavesNoBlob) {
+    Fixture f;
+    std::ofstream(f.store.blob_path("src")) << "abc";
+    std::optional<std::string> replaced;
+    ASSERT_EQ(objects::put(f.store, make_object("src", "src"), replaced), objects::PutResult::Stored);
+    objects::Object copied;
+    EXPECT_EQ(objects::copy(f.store, *objects::find(f.store, "bucket", "src"), "missing", "k", std::nullopt, copied),
+              objects::CopyResult::NoSuchBucket);
+    EXPECT_TRUE(fs::is_empty(f.store.staging_dir()));
+    std::size_t blobs = 0;
+    for ([[maybe_unused]] const auto &entry : fs::recursive_directory_iterator(f.store.blobs_dir())) {
+        if (entry.is_regular_file()) ++blobs;
+    }
+    EXPECT_EQ(blobs, 1u);
+}
+
+TEST(ObjectStore, UpdateHeadersInPlace) {
+    Fixture f;
+    const std::string key = "a b/%<script>\xE9";
+    std::optional<std::string> replaced;
+    ASSERT_EQ(objects::put(f.store, make_object(key, "blob"), replaced), objects::PutResult::Stored);
+    const http::Headers headers = {{"Cache-Control", "no-cache"}, {"x-amz-meta-new", "v"}};
+    EXPECT_EQ(objects::update_headers(f.store, "bucket", key, headers), objects::UpdateResult::Updated);
+    const auto found = objects::find(f.store, "bucket", key);
+    ASSERT_TRUE(found);
+    http::Headers stored = found->headers;
+    std::sort(stored.begin(), stored.end());
+    EXPECT_EQ(stored, headers);
+    EXPECT_EQ(found->blob_id, "blob");
+    EXPECT_EQ(found->etag, "\"e\"");
+    EXPECT_EQ(found->last_modified_ms, 1234);
+    EXPECT_EQ(found->size, 3u);
+
+    EXPECT_EQ(objects::update_headers(f.store, "bucket", "nope", headers), objects::UpdateResult::NoSuchKey);
+    EXPECT_EQ(objects::update_headers(f.store, "missing", key, headers), objects::UpdateResult::NoSuchBucket);
+}
+
 TEST(ObjectStore, BlobIdsAreRandomHex) {
     const std::string a = objects::new_blob_id();
     const std::string b = objects::new_blob_id();

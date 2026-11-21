@@ -1,5 +1,7 @@
 #include "micros3/buckets.h"
 
+#include "micros3/objects.h"
+
 #include <filesystem>
 #include <system_error>
 
@@ -35,6 +37,21 @@ bool looks_like_ipv4(std::string_view name) {
 
 Bucket read_bucket(const db::Statement &stmt) {
     return Bucket{stmt.column_text(0), stmt.column_int(1), stmt.column_text(2)};
+}
+
+// The blob ids of the parts of every upload in bucket `name`.
+std::vector<std::string> upload_part_blobs(Store &store, std::string_view name) {
+    std::vector<std::string> blobs;
+    db::Statement parts =
+        store.db().prepare("SELECT parts.blob_id FROM parts JOIN uploads USING (upload_id) WHERE uploads.bucket = ?");
+    parts.bind_text(1, name);
+    while (parts.step()) blobs.push_back(parts.column_text(0));
+    return blobs;
+}
+
+// Removes blob files after a commit. A leftover is removed at the next startup.
+void remove_blobs(Store &store, const std::vector<std::string> &blobs) {
+    for (const std::string &blob : blobs) objects::remove_blob(store, blob);
 }
 
 } // namespace
@@ -106,21 +123,40 @@ DeleteResult remove(Store &store, std::string_view name) {
             objects.bind_text(1, name);
             if (objects.step()) return DeleteResult::NotEmpty;
         }
-        {
-            db::Statement parts = store.db().prepare(
-                "SELECT parts.blob_id FROM parts JOIN uploads USING (upload_id) WHERE uploads.bucket = ?");
-            parts.bind_text(1, name);
-            while (parts.step()) part_blobs.push_back(parts.column_text(0));
-        }
+        part_blobs = upload_part_blobs(store, name);
         // Uploads and parts go with the bucket (ON DELETE CASCADE).
         store.db().prepare("DELETE FROM buckets WHERE name = ?").bind_text(1, name).run();
         txn.commit();
     }
-    for (const std::string &blob : part_blobs) {
-        std::error_code ec;
-        std::filesystem::remove(store.blob_path(blob), ec); // a leftover is removed at the next startup
-    }
+    remove_blobs(store, part_blobs);
     return DeleteResult::Deleted;
+}
+
+EmptyResult empty(Store &store, std::string_view name) {
+    if (!find(store, name)) return EmptyResult::NoSuchBucket;
+    db::Statement batch = store.db().prepare("SELECT key FROM objects WHERE bucket = ? ORDER BY key LIMIT ?");
+    for (;;) {
+        std::vector<std::string> keys;
+        batch.reset();
+        batch.bind_text(1, name).bind_int(2, static_cast<std::int64_t>(kEmptyBatch));
+        while (batch.step()) keys.push_back(batch.column_blob(0));
+        batch.reset();
+        if (keys.empty()) break;
+        if (objects::remove_many(store, name, keys) == objects::DeleteResult::NoSuchBucket) {
+            return EmptyResult::NoSuchBucket;
+        }
+    }
+    std::vector<std::string> part_blobs;
+    {
+        db::Transaction txn(store.db());
+        if (!find(store, name)) return EmptyResult::NoSuchBucket;
+        part_blobs = upload_part_blobs(store, name);
+        // Parts go with their uploads (ON DELETE CASCADE).
+        store.db().prepare("DELETE FROM uploads WHERE bucket = ?").bind_text(1, name).run();
+        txn.commit();
+    }
+    remove_blobs(store, part_blobs);
+    return EmptyResult::Emptied;
 }
 
 } // namespace micros3::buckets

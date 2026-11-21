@@ -71,6 +71,26 @@ DeleteResult remove(Store &store, std::string_view bucket, std::string_view key)
 // files. Missing keys count as deleted.
 DeleteResult remove_many(Store &store, std::string_view bucket, const std::vector<std::string> &keys);
 
+enum class CopyResult { Copied, NoSuchBucket };
+
+// Copies `source` (an object row, as find() returned it) to
+// `bucket`/`key`. The copy gets a blob of its own and a new last-modified
+// time; its ETag is the source's. When `headers` is given it replaces the
+// stored metadata headers, otherwise the source's are kept. On success the
+// new row is stored in `copied` and the blob of any row it replaced is
+// deleted. NoSuchBucket means the destination bucket does not exist.
+// Throws std::system_error when the blob cannot be copied.
+CopyResult copy(Store &store, const Object &source, std::string_view bucket, std::string_view key,
+                const std::optional<http::Headers> &headers, Object &copied);
+
+enum class UpdateResult { Updated, NoSuchBucket, NoSuchKey };
+
+// Replaces the stored metadata headers of an object in place (UI7). The
+// blob, size, ETag and last-modified time stay the same. The caller
+// validates `headers`.
+UpdateResult update_headers(Store &store, std::string_view bucket, std::string_view key,
+                            const http::Headers &headers);
+
 // A new random blob id: 32 lowercase hex characters.
 std::string new_blob_id();
 

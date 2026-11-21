@@ -263,33 +263,17 @@ http::Response copy_object(Store &store, const http::Request &request, const rou
                      request);
     }
 
-    // Each blob has one owner, so the copy gets a blob of its own.
-    objects::StagedBlob blob(store);
-    blob.copy_from(store.blob_path(object->blob_id));
-    object->bucket = route.bucket;
-    object->key = route.key;
-    object->size = blob.size();
-    object->last_modified_ms = clock::now_ms();
-    if (replace) object->headers = std::move(metadata);
-    object->blob_id = blob.commit();
-    std::optional<std::string> replaced;
-    objects::PutResult result;
-    try {
-        result = objects::put(store, *object, replaced);
-    } catch (...) {
-        objects::remove_blob(store, object->blob_id);
-        throw;
-    }
-    if (result == objects::PutResult::NoSuchBucket) {
-        objects::remove_blob(store, object->blob_id);
+    objects::Object copied;
+    std::optional<http::Headers> headers;
+    if (replace) headers = std::move(metadata);
+    if (objects::copy(store, *object, route.bucket, route.key, headers, copied) == objects::CopyResult::NoSuchBucket) {
         return error(no_such_bucket(), request);
     }
-    if (replaced) objects::remove_blob(store, *replaced);
 
     xml::Writer writer;
     writer.open("CopyObjectResult", xml::kS3Namespace)
-        .element("LastModified", clock::iso8601(object->last_modified_ms))
-        .element("ETag", object->etag);
+        .element("LastModified", clock::iso8601(copied.last_modified_ms))
+        .element("ETag", copied.etag);
     http::Response response = xml_response(writer.finish());
     response.set_header("x-amz-server-side-encryption", std::string(kSseAlgorithm));
     return response;
