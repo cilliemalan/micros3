@@ -51,8 +51,21 @@ std::optional<S3Error> check_object_request(const http::Request &request, const 
     return std::nullopt;
 }
 
+std::optional<S3Error> check_content_length(const Store &store, const http::Request &request) {
+    const auto value = request.header("content-length");
+    if (!value || value->empty()) return std::nullopt;
+    std::uint64_t length = 0;
+    for (char c : *value) {
+        if (c < '0' || c > '9') return std::nullopt; // uWebSockets has already rejected it
+        if (length > (UINT64_MAX - 9) / 10) return entity_too_large();
+        length = length * 10 + static_cast<std::uint64_t>(c - '0');
+    }
+    if (length > store.max_body_bytes()) return entity_too_large();
+    return std::nullopt;
+}
+
 StagedBodyExchange::StagedBodyExchange(Store &store, const http::Request &request, ExpectedDigests expected)
-    : store_(store), expected_(std::move(expected)), blob_(store) {
+    : store_(store), expected_(std::move(expected)), blob_(store), max_bytes_(store.max_body_bytes()) {
     request_.method = request.method;
     request_.path = request.path;
     request_.request_id = request.request_id;
@@ -61,7 +74,14 @@ StagedBodyExchange::StagedBodyExchange(Store &store, const http::Request &reques
 }
 
 void StagedBodyExchange::on_data(std::string_view chunk) {
-    if (failed_) return;
+    if (failed_ || too_large_) return;
+    received_ += chunk.size();
+    if (received_ > max_bytes_) {
+        // The rest of the body is read and dropped; on_end answers the error.
+        too_large_ = true;
+        blob_.discard();
+        return;
+    }
     md5_.update(chunk);
     if (crc32_) crc32_->update(chunk);
     if (sha256_) sha256_->update(chunk);
@@ -75,6 +95,7 @@ void StagedBodyExchange::on_data(std::string_view chunk) {
 }
 
 http::Response StagedBodyExchange::on_end() {
+    if (too_large_) return error(entity_too_large());
     if (failed_) return error(internal_error());
     const digest::Md5Digest md5 = md5_.finish();
     if (expected_.md5 && *expected_.md5 != as_view(md5.data(), md5.size())) {

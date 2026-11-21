@@ -230,6 +230,7 @@ std::unique_ptr<http::Exchange> upload_part(Store &store, const http::Request &r
     }
     auto expected = expected_digests(request);
     if (auto *e = std::get_if<S3Error>(&expected)) return fixed(*e);
+    if (auto e = check_content_length(store, request)) return fixed(*e);
     auto upload = find_upload(store, route);
     if (auto *e = std::get_if<S3Error>(&upload)) return fixed(*e);
     return std::make_unique<UploadPartExchange>(store, request, std::get<uploads::Upload>(std::move(upload)),

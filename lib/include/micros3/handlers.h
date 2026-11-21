@@ -115,7 +115,10 @@ private:
     std::optional<digest::Sha256> sha256_;
     std::optional<std::array<std::uint8_t, 4>> crc32_result_;
     std::optional<digest::Sha256Digest> sha256_result_;
+    std::uint64_t max_bytes_;
+    std::uint64_t received_ = 0;
     bool failed_ = false;
+    bool too_large_ = false;
 };
 
 // The owner (and initiator) of every bucket, object and upload.
@@ -125,6 +128,15 @@ inline constexpr std::string_view kOwnerName = "micros3";
 // The value of the x-amz-server-side-encryption header on object responses.
 // Objects are stored unencrypted, but answer as SSE-S3 (design.md, question 3).
 inline constexpr std::string_view kSseAlgorithm = "AES256";
+
+// The error for a body longer than Store::max_body_bytes().
+inline S3Error entity_too_large() {
+    return {400, "EntityTooLarge", "Your proposed upload exceeds the maximum allowed object size."};
+}
+
+// EntityTooLarge when the request's Content-Length exceeds the store's limit.
+// A chunked body has no Content-Length, so StagedBodyExchange counts it too.
+std::optional<S3Error> check_content_length(const Store &store, const http::Request &request);
 
 // The error for a key longer than objects::kMaxKeyBytes.
 inline S3Error key_too_long() { return {400, "KeyTooLongError", "Your key is too long"}; }

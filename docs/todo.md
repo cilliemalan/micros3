@@ -153,7 +153,7 @@ All are recorded in design.md. Nothing here is open.
 - [x] Each request completes promptly. Verify's default request timeout is 30 s. (On 2026-11-21 a full `verify` run with `--request-timeout 5` passed all 43 checks in 6 s. CopyObject and CompleteMultipartUpload still copy on the event loop, so a multi-gigabyte copy would hold up other requests; no check does that.)
 - [x] Update the operation checkboxes in `lib/README.md` as each operation lands. (All operations are ticked, and the conditional-write and Range behavior is described.)
 - [x] Update the root `README.md` with the build, the run command, the environment variables (including the credentials) and the Docker command. (Also the static-link option, the data directory layout and the test scripts.)
-- [ ] Consider a single-PUT size limit (EntityTooLarge above 5 GiB). Optional, since no check exercises it.
+- [x] Consider a single-PUT size limit (EntityTooLarge above 5 GiB). Optional, since no check exercises it. (PutObject and UploadPart answer `EntityTooLarge` (400) for a body over 5 GiB: from `Content-Length` before the body is read, or by counting a chunked body as it arrives, which then drops the rest and discards the staging file. In practice uWebSockets already answers 400 to a `Content-Length` above 999,999,999 bytes, so only chunked bodies reach the limit. `Store::set_max_body_bytes` lowers it for tests in `test/server_test.cpp`.)
 
 ## Emulator tests
 

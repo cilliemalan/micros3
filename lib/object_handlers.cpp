@@ -202,6 +202,7 @@ std::unique_ptr<http::Exchange> put_object(Store &store, const http::Request &re
     if (auto *e = std::get_if<S3Error>(&expected)) return fixed_error(*e, request);
     http::Headers metadata = objects::metadata_from(request);
     if (auto e = check_object_request(request, route, metadata)) return fixed_error(*e, request);
+    if (auto e = check_content_length(store, request)) return fixed_error(*e, request);
     if (!buckets::find(store, route.bucket)) return fixed_error(no_such_bucket(), request);
     return std::make_unique<PutObjectExchange>(store, request, route, std::move(metadata),
                                                std::get<ExpectedDigests>(std::move(expected)));

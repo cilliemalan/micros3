@@ -14,10 +14,14 @@
 #include "micros3/db.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 
 namespace micros3 {
+
+// The largest body S3 accepts in one PutObject or UploadPart: 5 GiB.
+inline constexpr std::uint64_t kMaxBodyBytes = std::uint64_t{5} << 30;
 
 // What the startup scan removed.
 struct StartupScan {
@@ -40,12 +44,18 @@ public:
     // The path of a blob file, from its id.
     std::filesystem::path blob_path(const std::string &blob_id) const { return blobs_dir_ / blob_id; }
 
+    // The largest body a single PutObject or UploadPart may carry, in bytes.
+    // Larger bodies are EntityTooLarge. Tests lower it.
+    std::uint64_t max_body_bytes() const { return max_body_bytes_; }
+    void set_max_body_bytes(std::uint64_t bytes) { max_body_bytes_ = bytes; }
+
 private:
     std::filesystem::path data_dir_;
     std::filesystem::path blobs_dir_;
     std::filesystem::path staging_dir_;
     db::Database db_;
     StartupScan scan_;
+    std::uint64_t max_body_bytes_ = kMaxBodyBytes;
 };
 
 namespace store {

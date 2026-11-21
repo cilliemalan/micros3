@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cstdio>
 #include <future>
 #include <memory>
 #include <optional>
@@ -604,6 +605,53 @@ TEST(ObjectApi, ContentMd5) {
     EXPECT_EQ(body_of(s.send("GET", "/objects/k")), "body");
     EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.staging_dir()));
     EXPECT_EQ(std::distance(std::filesystem::directory_iterator(s.s3.store.blobs_dir()), {}), 1);
+}
+
+namespace {
+
+// Rewrites a request from s3_request to send its body with chunked transfer
+// encoding, in chunks of `chunk` bytes, so it carries no Content-Length.
+std::string chunked(const std::string &request, std::size_t chunk) {
+    const std::size_t end = request.find("\r\n\r\n");
+    std::string head = request.substr(0, end + 2);
+    const std::string body = request.substr(end + 4);
+    const std::size_t length = head.find("Content-Length: ");
+    head.erase(length, head.find("\r\n", length) + 2 - length);
+    std::string out = head + "Transfer-Encoding: chunked\r\n\r\n";
+    for (std::size_t at = 0; at < body.size(); at += chunk) {
+        const std::string piece = body.substr(at, chunk);
+        char size[32];
+        std::snprintf(size, sizeof size, "%zx\r\n", piece.size());
+        out += size + piece + "\r\n";
+    }
+    return out + "0\r\n\r\n";
+}
+
+} // namespace
+
+TEST(ObjectApi, EntityTooLarge) {
+    ObjectServer s;
+    s.s3.store.set_max_body_bytes(10);
+    EXPECT_TRUE(status_is(s.send("PUT", "/objects/k", "0123456789"), "200"));
+
+    // A Content-Length over the limit is rejected before the body is read.
+    std::string response = s.send("PUT", "/objects/k", "0123456789A");
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>EntityTooLarge</Code>")) << response;
+
+    // A chunked body is counted as it arrives.
+    const int port = s.server.port();
+    response = ::exchange(port, chunked(s3_request("PUT", "/objects/k", "abcdefghijklmnop"), 3));
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>EntityTooLarge</Code>")) << response;
+    response = ::exchange(port, chunked(s3_request("PUT", "/objects/c", "abcdefghij"), 3));
+    EXPECT_TRUE(status_is(response, "200")) << response;
+    EXPECT_EQ(body_of(s.send("GET", "/objects/c")), "abcdefghij");
+
+    // The rejected uploads left the object alone and no file behind.
+    EXPECT_EQ(body_of(s.send("GET", "/objects/k")), "0123456789");
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.staging_dir()));
+    EXPECT_EQ(std::distance(std::filesystem::directory_iterator(s.s3.store.blobs_dir()), {}), 2);
 }
 
 TEST(ObjectApi, Checksums) {
@@ -1309,6 +1357,22 @@ std::string upload_part(ObjectServer &s, const std::string &target, const std::s
 }
 
 } // namespace
+
+TEST(MultipartApi, PartTooLarge) {
+    ObjectServer s;
+    s.s3.store.set_max_body_bytes(10);
+    const std::string id = create_upload(s, "/objects/key");
+    const std::string target = "/objects/key?partNumber=1&uploadId=" + id;
+    std::string response = s.send("PUT", target, "0123456789A");
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>EntityTooLarge</Code>")) << response;
+    response = ::exchange(s.server.port(), chunked(s3_request("PUT", target, "0123456789A"), 4));
+    EXPECT_TRUE(status_is(response, "400")) << response;
+    EXPECT_TRUE(has(body_of(response), "<Code>EntityTooLarge</Code>")) << response;
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.staging_dir()));
+    EXPECT_TRUE(std::filesystem::is_empty(s.s3.store.blobs_dir()));
+    EXPECT_EQ(upload_part(s, "/objects/key", id, 1, "0123456789"), quoted_md5("0123456789"));
+}
 
 TEST(MultipartApi, UploadListAndComplete) {
     ObjectServer s;
