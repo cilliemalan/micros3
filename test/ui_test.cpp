@@ -284,4 +284,56 @@ TEST_F(UiStatic, GuardsRunBeforeStaticFiles) {
     EXPECT_EQ(service.begin(request)->on_end().status, 403);
 }
 
+void expect_security_headers(const Response &response) {
+    EXPECT_EQ(header(response, "content-security-policy"),
+              "default-src 'self'; img-src 'self' blob: data:; connect-src 'self'; style-src 'self'; "
+              "object-src 'none'; frame-ancestors 'none'")
+        << response.status;
+    EXPECT_EQ(header(response, "x-content-type-options"), "nosniff") << response.status;
+    EXPECT_EQ(header(response, "referrer-policy"), "no-referrer") << response.status;
+    EXPECT_EQ(header(response, "strict-transport-security"), "") << response.status;
+}
+
+// Every response from the UI service carries the headers (U21), not just the
+// pages: API replies, errors, object content and refusals too.
+TEST_F(UiStatic, EveryResponseCarriesTheSecurityHeaders) {
+    expect_security_headers(get("GET", "/"));
+    expect_security_headers(get("HEAD", "/assets/index-abc.js"));
+    expect_security_headers(get("GET", "/no/such/file"));
+    expect_security_headers(get("POST", "/index.html"));
+    expect_security_headers(get("GET", "/api/health"));
+    expect_security_headers(get("GET", "/api/buckets"));
+    expect_security_headers(get("GET", "/api/buckets/missing/objects"));
+    expect_security_headers(get("GET", "/api/nothing"));
+
+    Request create = make_request("POST", "localhost:3924");
+    create.path = "/api/buckets";
+    auto exchange = service.begin(create);
+    exchange->on_data(R"({"name":"safe-bucket"})");
+    const Response created = exchange->on_end();
+    EXPECT_EQ(created.status, 200);
+    expect_security_headers(created);
+
+    Request upload = make_request("PUT", "localhost:3924");
+    upload.path = "/api/buckets/safe-bucket/object";
+    upload.query = "key=page.html";
+    upload.headers.emplace_back("content-type", "text/html");
+    upload.headers.emplace_back("content-length", "22");
+    auto put = service.begin(upload);
+    put->on_data("<script>1</script>!!!!");
+    const Response stored = put->on_end();
+    EXPECT_EQ(stored.status, 200);
+    expect_security_headers(stored);
+
+    const Response content = get("GET", "/api/buckets/safe-bucket/object", "key=page.html");
+    EXPECT_EQ(content.status, 200);
+    expect_security_headers(content);
+
+    Request refused = make_request("POST", "localhost:3924", "http://attacker.example");
+    refused.path = "/api/buckets";
+    const Response forbidden = service.begin(refused)->on_end();
+    EXPECT_EQ(forbidden.status, 403);
+    expect_security_headers(forbidden);
+}
+
 } // namespace

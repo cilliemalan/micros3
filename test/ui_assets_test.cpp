@@ -6,6 +6,8 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cctype>
+#include <set>
 #include <string>
 #include <string_view>
 
@@ -59,6 +61,39 @@ TEST(UiAssets, PathsAreSortedAndSane) {
     // Every entry is found by its own path.
     for (const Asset &asset : assets) EXPECT_EQ(assets.find(asset.path), &asset);
     EXPECT_EQ(assets.find("/no/such/file"), nullptr);
+}
+
+// The embedded build names no external URL (U21), so the page loads nothing
+// from anywhere but the binary. The build's own check
+// (ui/scripts/check-safety.mjs) is stricter; this one guards the bytes that
+// were actually compiled in. The allowed strings are identifiers and example
+// text that are never fetched.
+TEST(UiAssets, NoExternalUrls) {
+    const std::set<std::string_view> allowed = {
+        "http://www.w3.org/2000/svg",
+        "http://www.w3.org/1999/xlink",
+        "http://www.w3.org/1999/xhtml",
+        "http://www.w3.org/XML/1998/namespace",
+        "http://www.w3.org/1998/Math/MathML",
+        "http://s3.amazonaws.com/doc/2006-03-01/",
+        "https://react.dev/errors/",
+        "http://localhost:5173",
+        "https://*.example.com",
+    };
+    const auto ends_url = [](char c) {
+        return std::isspace(static_cast<unsigned char>(c)) || std::string_view("\"'`()<>\\").find(c) != std::string_view::npos;
+    };
+    for (const Asset &asset : embedded_assets()) {
+        const std::string_view text = asset.bytes();
+        for (const std::string_view scheme : {"http://", "https://"}) {
+            for (std::size_t at = text.find(scheme); at != std::string_view::npos; at = text.find(scheme, at + 1)) {
+                std::size_t end = at + scheme.size();
+                while (end < text.size() && !ends_url(text[end])) ++end;
+                const std::string_view url = text.substr(at, end - at);
+                EXPECT_TRUE(allowed.count(url) == 1) << asset.path << " names " << url;
+            }
+        }
+    }
 }
 
 } // namespace

@@ -4,7 +4,9 @@
 #
 #   ui_install    runs `pnpm install --frozen-lockfile` on every build
 #   build.stamp   runs `vite build` when a file under ui/ (not node_modules)
-#                 changes
+#                 changes, then ui/scripts/check-safety.mjs, which fails the
+#                 build if the source writes HTML, evaluates strings or
+#                 navigates away, or if the output names an external URL
 #   ui_assets.cpp written by cmake/embed_ui.cmake, replaced only when it
 #                 differs
 #   ui_assets     the target libmicros3 depends on
@@ -52,10 +54,11 @@ add_custom_target(ui_install
 add_custom_command(
     OUTPUT "${MICROS3_UI_STAMP}"
     COMMAND "${MICROS3_PNPM}" exec vite build --outDir "${MICROS3_UI_DIST}" --emptyOutDir
+    COMMAND "${MICROS3_NODE}" scripts/check-safety.mjs "${MICROS3_UI_SOURCE_DIR}" "${MICROS3_UI_DIST}"
     COMMAND "${CMAKE_COMMAND}" -E touch "${MICROS3_UI_STAMP}"
     WORKING_DIRECTORY "${MICROS3_UI_SOURCE_DIR}"
     DEPENDS ${ui_inputs} ui_install
-    COMMENT "Building the web UI (vite build)"
+    COMMENT "Building the web UI (vite build and safety check)"
     VERBATIM
     USES_TERMINAL
 )

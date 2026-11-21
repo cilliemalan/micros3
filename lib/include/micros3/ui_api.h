@@ -75,9 +75,10 @@ bool host_allowed(std::string_view host, std::uint16_t port);
 // authentication.
 std::optional<http::Response> guard(const http::Request &request, std::uint16_t port);
 
-// Adds the headers every UI page response carries (docs/UI.md, "Security of
-// the frontend"): the Content-Security-Policy, X-Content-Type-Options:
-// nosniff and Referrer-Policy: no-referrer.
+// Adds the headers every response from the UI service carries (docs/UI.md,
+// "Security of the frontend"): the Content-Security-Policy,
+// X-Content-Type-Options: nosniff and Referrer-Policy: no-referrer. UiService
+// adds them to pages, API replies, object content and refusals alike.
 void add_security_headers(http::Response &response);
 
 // The response for a request outside /api/: the embedded file at the path,
@@ -99,6 +100,10 @@ public:
     void set_port(std::uint16_t port) { port_ = port; }
 
 private:
+    // The exchange for a request that passed the guards, before the security
+    // headers are added.
+    std::unique_ptr<http::Exchange> route(const http::Request &request);
+
     Store &store_;
     std::atomic<std::uint16_t> port_;
     ui::Assets assets_;

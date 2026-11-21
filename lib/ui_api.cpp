@@ -147,7 +147,6 @@ http::Response serve_static(const Assets &assets, const http::Request &request) 
     } else {
         response.set_header("Cache-Control", "no-cache");
     }
-    add_security_headers(response);
     if (request.method == "HEAD") {
         response.reported_length = asset->size;
     } else {
@@ -751,9 +750,30 @@ std::optional<std::vector<std::string>> api_segments(std::string_view rest) {
     return segments;
 }
 
+// Passes the body to an inner exchange and adds the security headers to the
+// response it gives, so no response from the UI service goes without them.
+class SecuredExchange : public http::Exchange {
+public:
+    explicit SecuredExchange(ExchangePtr inner) : inner_(std::move(inner)) {}
+    void on_data(std::string_view chunk) override { inner_->on_data(chunk); }
+    http::Response on_end() override {
+        http::Response response = inner_->on_end();
+        ui::add_security_headers(response);
+        return response;
+    }
+    void on_abort() override { inner_->on_abort(); }
+
+private:
+    ExchangePtr inner_;
+};
+
 } // namespace
 
 std::unique_ptr<http::Exchange> UiService::begin(const http::Request &request) {
+    return std::make_unique<SecuredExchange>(route(request));
+}
+
+std::unique_ptr<http::Exchange> UiService::route(const http::Request &request) {
     if (auto refused = ui::guard(request, port_)) return fixed(std::move(*refused));
 
     constexpr std::string_view kApi = "/api/";
