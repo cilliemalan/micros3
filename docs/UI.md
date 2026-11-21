@@ -111,6 +111,24 @@ The UI service is an `http::Service`, like the S3 service. It reuses the same re
 | GET | `/api/buckets/{bucket}/uploads` | Multipart uploads in progress, paged | `uploads::list` |
 | DELETE | `/api/buckets/{bucket}/uploads?key=&uploadId=` | Abort one upload | `uploads::abort` |
 
+### Reply shapes
+
+The client in `ui/src/api.ts` (U6) expects these JSON replies. Field names are camelCase and times are ISO 8601 strings in UTC. Routes not listed answer 204 with no body on success.
+
+| Route | Reply |
+| --- | --- |
+| `GET /api/health` | `{status: "ok"}` |
+| `GET /api/buckets` | `{buckets: [{name, region, created}]}` |
+| `POST /api/buckets` | `{name, region, created}` |
+| `GET /api/buckets/{bucket}` | `{name, region, created, encryption, cors}`, with `cors` a boolean |
+| `GET .../objects` | `{folders: [prefix], objects: [{key, size, etag, lastModified}], next?}`. `next` is the value for `after`, absent on the last page |
+| `GET` and `PUT .../meta` | `{key, size, etag, lastModified, headers: {name: value}}` |
+| `PUT .../object` | `{key, size, etag, lastModified}` |
+| `POST .../delete` | `{deleted: [key], errors: [{key, code, message}]}` |
+| `POST .../copy` | `{key, size, etag, lastModified}` of the destination |
+| `GET .../cors` | The XML, as `application/xml` |
+| `GET .../uploads` | `{uploads: [{key, uploadId, initiated}], next?: {key, uploadId}}`. The next page is asked for with `keyMarker` and `uploadIdMarker` |
+
 The UI does not need `ListObjects` v1, multipart upload creation, or part uploads. A large upload uses the single `PUT` above, up to the store's 5 GiB limit.
 
 ### Metadata edits (UI7)
@@ -231,4 +249,4 @@ The built JS contains URL strings that are not fetched: XML namespace URIs (`htt
 
 ## Status
 
-The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3), the shared operation code is extracted (U4), and the frontend scaffold in `ui/` is built and checked by the spike (U5). The UI port answers only `GET /api/health` so far. The steps are in [todo.md](todo.md), under "Web UI".
+The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3), the shared operation code is extracted (U4), the frontend scaffold in `ui/` is built and checked by the spike (U5), and the typed API client is in `ui/src/api.ts` (U6). The UI port answers only `GET /api/health` so far. The steps are in [todo.md](todo.md), under "Web UI".
