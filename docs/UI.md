@@ -249,6 +249,12 @@ The pipeline is in `cmake/ui.cmake`, included from the root `CMakeLists.txt`, an
 
 The static `micros3` binary grew from 6,081,344 bytes (before the UI) to 6,524,672 bytes with the scaffold page embedded (about 436 KB of assets). The generated `ui_assets.cpp` is about 2.2 MB of source.
 
+### Regression run (U24)
+
+After U2 to U23, on 2026-11-21, with the default preset build in `ooo/`: `ooo/testmicros3` passed 269 tests; `pnpm test` in `ui/` passed 153 Vitest tests; `pnpm test:unit` in `verify/` passed 234 tests; and a full `verify` run against the S3 port exited 0 with 44 checks passed, while `/api/health` on the UI port answered 200 throughout. `test/persistence.sh`, `test/crash.sh`, `test/static-check.sh` and `test/ui-check.sh` passed, and `test/docker-check.sh` passed against an image built from the tree. `file` reports the binary as statically linked and `ldd` reports it is not a dynamic executable.
+
+The finished UI makes the `micros3` binary 6,799,968 bytes, compared with 6,081,344 bytes before the UI and 6,524,672 bytes with the U12 scaffold: 718,624 bytes (about 12%) for the whole UI. The Docker image is 7,365,482 bytes.
+
 The UI service serves `/` as `index.html` with `Cache-Control: no-cache`, the hashed files under `/assets/` with `Cache-Control: public, max-age=31536000, immutable`, and any other embedded file at its own path with `no-cache`. Other paths, including S3-style ones, are a JSON 404 `NotFound`, and a method other than GET or HEAD on a file is 405.
 
 ### Development loop
