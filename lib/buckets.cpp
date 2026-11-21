@@ -56,6 +56,15 @@ void remove_blobs(Store &store, const std::vector<std::string> &blobs) {
 
 } // namespace
 
+bool valid_region(std::string_view region) {
+    if (region == "EU") return true;
+    if (region.empty() || region.size() > 64) return false;
+    for (char c : region) {
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+    }
+    return true;
+}
+
 bool valid_name(std::string_view name) {
     if (name.size() < 3 || name.size() > 63) return false;
     for (char c : name) {

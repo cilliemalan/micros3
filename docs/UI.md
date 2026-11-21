@@ -83,7 +83,9 @@ The UI service is an `http::Service`, like the S3 service. It reuses the same re
 ### Conventions
 
 - Bodies and responses are JSON, except object content and the CORS XML body.
-- Errors are a JSON object, `{"error": {"code": "NoSuchBucket", "message": "..."}}`, with the HTTP status the S3 API uses for that code. The codes are the S3 codes, so the UI can reuse S3 error vocabulary.
+- Errors are a JSON object, `{"error": {"code": "NoSuchBucket", "message": "..."}}`, with the HTTP status the S3 API uses for that code. The codes are the S3 codes, so the UI can reuse S3 error vocabulary. Three codes are the UI API's own: `MalformedJSON` (400) for a body that is not the JSON the route expects, `MethodNotAllowed` (405) for a known path with another method, and `NotFound` (404) for an unknown path. `HEAD` is allowed wherever `GET` is.
+- Path segments, such as the bucket name, are percent-decoded. A malformed escape is 400 `InvalidURI`.
+- `POST /api/buckets` answers 409 `BucketAlreadyOwnedByYou` when the bucket exists, in any region.
 - An object key is always passed in a `key` query parameter, never in the path. Keys can contain `/`, spaces, and any UTF-8, and a query parameter avoids path-encoding rules.
 - A batch takes at most 1,000 keys, as S3 does.
 - Requests with a body larger than the store's maximum are refused with `EntityTooLarge`.
@@ -249,4 +251,4 @@ The built JS contains URL strings that are not fetched: XML namespace URIs (`htt
 
 ## Status
 
-The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3), the shared operation code is extracted (U4), the frontend scaffold in `ui/` is built and checked by the spike (U5), the typed API client is in `ui/src/api.ts` (U6), and the request guards run on every UI request, in `ui::guard` in `lib/ui_api.cpp` (U7). The UI port answers only `GET /api/health` so far. The steps are in [todo.md](todo.md), under "Web UI".
+The design is settled: UI1 to UI8, with the guards in UI6. The two listeners and the `--ui-port` setting are in place (U2, U3), the shared operation code is extracted (U4), the frontend scaffold in `ui/` is built and checked by the spike (U5), the typed API client is in `ui/src/api.ts` (U6), and the request guards run on every UI request, in `ui::guard` in `lib/ui_api.cpp` (U7). The bucket routes of the JSON API are in `UiService` (U8): health, list, create, details, delete, empty, and CORS get, set and remove. The steps are in [todo.md](todo.md), under "Web UI".

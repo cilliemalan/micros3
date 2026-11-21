@@ -38,16 +38,6 @@ bool blank(std::string_view text) {
     return text.find_first_not_of(" \t\r\n") == std::string_view::npos;
 }
 
-// A region name such as "eu-west-1", or the legacy "EU".
-bool valid_region(std::string_view region) {
-    if (region == "EU") return true;
-    if (region.empty() || region.size() > 64) return false;
-    for (char c : region) {
-        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
-    }
-    return true;
-}
-
 // The LocationConstraint of a CreateBucketConfiguration body: the default
 // region when the body or the constraint is empty, or an error.
 std::variant<std::string, S3Error> location_constraint(std::string_view body) {
@@ -60,7 +50,7 @@ std::variant<std::string, S3Error> location_constraint(std::string_view body) {
         if (child.type() != pugi::node_element || local_name(child) != "LocationConstraint") continue;
         const std::string region = child.text().get();
         if (region.empty()) return std::string(buckets::kDefaultRegion);
-        if (!valid_region(region)) return invalid_location_constraint();
+        if (!buckets::valid_region(region)) return invalid_location_constraint();
         return region;
     }
     return std::string(buckets::kDefaultRegion);

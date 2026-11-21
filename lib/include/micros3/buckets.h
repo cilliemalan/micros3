@@ -20,6 +20,10 @@ namespace micros3::buckets {
 // (`-s3alias`, `--ol-s3`, `.mrap`, `--x-s3`, `--table-s3`).
 bool valid_name(std::string_view name);
 
+// True for a region name such as "eu-west-1" (lowercase letters, digits and
+// hyphens, at most 64 characters), or the legacy "EU".
+bool valid_region(std::string_view region);
+
 // The region a bucket was created in.
 inline constexpr std::string_view kDefaultRegion = "us-east-1";
 

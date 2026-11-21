@@ -5,8 +5,18 @@
 // It answers the JSON API under /api/. Errors are JSON,
 // {"error": {"code": ..., "message": ...}}, with the S3 codes and statuses.
 // Every request first passes the request guards (UI6, `ui::guard`). The
-// routes are added step by step (docs/todo.md, U8 to U11); for now it answers
-// GET /api/health and 404 for everything else.
+// routes are added step by step (docs/todo.md, U8 to U11). So far:
+//   GET    /api/health
+//   GET    /api/buckets                     {buckets: [{name, region, created}]}
+//   POST   /api/buckets                     body {name, region?}, answers the bucket
+//   GET    /api/buckets/{bucket}            {name, region, created, encryption, cors}
+//   DELETE /api/buckets/{bucket}            204, or 409 BucketNotEmpty
+//   POST   /api/buckets/{bucket}/empty      204
+//   GET    /api/buckets/{bucket}/cors       the XML, or 404 NoSuchCORSConfiguration
+//   PUT    /api/buckets/{bucket}/cors       body the S3 XML, 204
+//   DELETE /api/buckets/{bucket}/cors       204
+// Path segments are percent-decoded. A known path with another method is 405
+// MethodNotAllowed; HEAD is allowed wherever GET is. Other paths are 404.
 
 #include "micros3/http.h"
 
