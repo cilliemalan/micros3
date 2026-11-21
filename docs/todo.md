@@ -150,7 +150,7 @@ All are recorded in design.md. Nothing here is open.
 
 ## Cross-cutting
 
-- [ ] Each request completes promptly. Verify's default request timeout is 30 s.
+- [x] Each request completes promptly. Verify's default request timeout is 30 s. (On 2026-11-21 a full `verify` run with `--request-timeout 5` passed all 43 checks in 6 s. CopyObject and CompleteMultipartUpload still copy on the event loop, so a multi-gigabyte copy would hold up other requests; no check does that.)
 - [x] Update the operation checkboxes in `lib/README.md` as each operation lands. (All operations are ticked, and the conditional-write and Range behavior is described.)
 - [x] Update the root `README.md` with the build, the run command, the environment variables (including the credentials) and the Docker command. (Also the static-link option, the data directory layout and the test scripts.)
 - [ ] Consider a single-PUT size limit (EntityTooLarge above 5 GiB). Optional, since no check exercises it.
@@ -167,7 +167,7 @@ All are recorded in design.md. Nothing here is open.
 
 ## Verifier changes
 
-- [ ] **V1.** Add a suite selector, such as `--suite <name>`, to `verify/index.js`. design.md's open question 6 says it is needed. Add it to the usage text and to the unit tests.
+- [x] **V1.** Add a suite selector, such as `--suite <name>`, to `verify/index.js`. design.md's open question 6 says it is needed. Add it to the usage text and to the unit tests. (`--suite`/`-s` in `verify/suites.js`, repeatable or comma-separated, case-insensitive, run in the usual order: `buckets`, `objects`, `listing`, `multipart`, `cors`, `encryption`. An unknown name exits 1 before any request. `--help` prints the new usage text. Tests in `verify/test/suites.test.js` and `verify/test/infrastructure.test.js`; `pnpm test:unit` now has 229 tests, up from 222.)
 - [ ] **V2.** Split the long checks into named scenarios, so a failure names the case that failed. `conditional.js` (317 lines) is the first candidate, then `cors-behavior.js` and `list-parts.js`.
 - [ ] **V3.** Add the bad-signature check (D5): a signed request with a wrong secret, expecting 403 `SignatureDoesNotMatch`. Add it to the unit tests.
 - [ ] **V4.** Before relying on any verifier change, run it against a disposable AWS bucket with explicit permission (`pnpm test --aws`, only where charges are acceptable), as design.md and the todo rule require. V3 is checked against AWS this way too.

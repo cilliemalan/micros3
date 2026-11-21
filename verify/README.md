@@ -146,6 +146,12 @@ never treated as proof that a resource is missing: an uncertain bucket
 creation is still cleaned up, and a bucket is retained when its multipart
 uploads cannot be listed and aborted.
 
+All suites run by default, in the order buckets, objects, listing, multipart,
+cors, encryption. `--suite <name>` (or `-s`) runs only the named suite; repeat it
+or give a comma-separated list to run several, which still run in that order.
+An unknown name is rejected before any request is made. The initial ListBuckets
+connection check always runs. `--help` prints the options.
+
 `pnpm start` is an alias for the verifier and accepts the same options.
 The bucket, object, listing, multipart, CORS and encryption checks create uniquely
 named buckets and temporary objects, uploads or CORS configurations. Object keys

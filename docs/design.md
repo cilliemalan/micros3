@@ -241,7 +241,7 @@ Every request except CORS preflight `OPTIONS` must carry a SigV4 signature in th
 
 ## Implementation order
 
-`verify` runs every suite on each invocation and has no option to select one. Each phase is done when the checks named for it pass in a full run. Later phases can fail for earlier reasons, so read the earlier failures first. A check that needs an unfinished operation reports BLOCKED, not FAIL.
+`verify` runs every suite by default. `--suite <name>` (repeatable, or comma-separated) runs only the named suites: `buckets`, `objects`, `listing`, `multipart`, `cors` and `encryption`. Each phase is done when the checks named for it pass in a full run. Later phases can fail for earlier reasons, so read the earlier failures first. A check that needs an unfinished operation reports BLOCKED, not FAIL.
 
 1. **Skeleton.** Flags and environment for `--data-dir` and `--port`, the FetchContent dependencies, SigV4 authentication with the payload hash check, the HTTP server, path-style routing, the XML error writer, the SQLite schema, the startup scan, and the static Docker build. Done when `ListBuckets` returns an empty list (the first call in `verification.js`).
 2. **Buckets.** ListBuckets, CreateBucket, HeadBucket, GetBucketLocation, DeleteBucket (`bucket.js`, `resources.js`). DeleteBucket must refuse a bucket that holds objects, and must delete a bucket whose only contents are uploads. Every later check creates buckets, so this phase comes first.
@@ -316,5 +316,5 @@ Other matters for consideration:
 3. Object responses for SSE-S3. Should PutObject, GetObject and HeadObject return `x-amz-server-side-encryption: AES256`? The integrity checks use SSE-S3 objects, so probably yes. **ANSWER: yes**
 4. Conditional writes. `If-None-Match` on PutObject and CompleteMultipartUpload is not defined in [lib/README.md](../lib/README.md), so it stays unsupported. **ANSWER: Unsupported**, and the request returns 501 `NotImplemented` rather than being ignored (D7).
 5. Future and unparseable dates. Not defined by S3 and not exercised, so they are left unspecified. **ANSWER: do whatever**
-6. Suite selection. `verify` cannot run one suite at a time. A `--suite` flag would speed up phase-by-phase work, and splitting long checks into scenarios is listed in [todo.md](todo.md) as V2. **ANSWER: support needs to be added.** Added to the todo as V1.
+6. Suite selection. `verify` could not run one suite at a time. A `--suite` flag would speed up phase-by-phase work, and splitting long checks into scenarios is listed in [todo.md](todo.md) as V2. **ANSWER: support needs to be added.** Added to the todo as V1, and done: `--suite <name>`.
 7. Multiple ranges. A `Range` header with several ranges is not covered by the requirements. **DECIDED (D6):** it is ignored, and the whole object is returned with 200.

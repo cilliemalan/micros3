@@ -342,3 +342,40 @@ test('verifier times out a hung connection check', async t => {
   assert.match(result.stderr, /ListBuckets timed out after 300 ms\nInitial check failed/);
   assert.ok(Date.now() - started < 10_000);
 });
+
+test('verifier prints usage with --help and makes no request', async t => {
+  const { endpoint, requests } = await startDeniedServer(t);
+  const result = await runVerifier(['--help', '--endpoint', endpoint], verifierEnvironment());
+  assert.equal(result.code, 0);
+  assert.match(result.stdout, /^Usage: node index\.js \[options\]/);
+  assert.match(result.stdout, /--suite <name>.*\n.*buckets, objects, listing, multipart, cors, encryption/);
+  assert.equal(result.stderr, '');
+  assert.equal(requests.length, 0);
+});
+
+test('verifier rejects an unknown suite before its first request', async t => {
+  const { endpoint, requests } = await startDeniedServer(t);
+  const result = await runVerifier(['--endpoint', endpoint, '--suite', 'nope'], verifierEnvironment());
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Unknown suite "nope"; expected one of: buckets,/);
+  assert.doesNotMatch(result.stdout, /Target:|Results:/);
+  assert.equal(requests.length, 0);
+});
+
+test('verifier runs only the selected suites', async t => {
+  // ListBuckets succeeds with an empty list; every other request is denied,
+  // so the selected suite's checks run and fail without touching the others.
+  const endpoint = await startServer(t, (request, response) => {
+    const listBuckets = request.method === 'GET' && new URL(request.url, 'http://x').pathname === '/';
+    response.writeHead(listBuckets ? 200 : 403, { 'Content-Type': 'application/xml' });
+    response.end(listBuckets
+      ? '<ListAllMyBucketsResult><Buckets></Buckets></ListAllMyBucketsResult>'
+      : '<Error><Code>AccessDenied</Code><Message>Denied</Message></Error>');
+  });
+  const result = await runVerifier(['--endpoint', endpoint, '-s', 'encryption'],
+    verifierEnvironment({ AWS_DEFAULT_REGION: 'us-east-1' }));
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout.split('\n')[2], 'Suites: encryption', result.stderr);
+  assert.match(result.stdout, /\nEncryption:\n/, result.stderr);
+  assert.doesNotMatch(result.stdout, /Bucket operations:|Object operations:|Listing operations:|Multipart operations:|CORS operations:/);
+});
