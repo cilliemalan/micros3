@@ -92,3 +92,37 @@ export const XIcon = () => (
     <path d="M6 6l12 12M18 6 6 18" />
   </Icon>
 )
+
+export const UploadIcon = () => (
+  <Icon>
+    <path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+  </Icon>
+)
+
+export const DownloadIcon = () => (
+  <Icon>
+    <path d="M12 4v12M7 11l5 5 5-5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+  </Icon>
+)
+
+export const FolderPlusIcon = () => (
+  <Icon>
+    <path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z" />
+    <path d="M12 10v6M9 13h6" />
+  </Icon>
+)
+
+export const CopyIcon = () => (
+  <Icon>
+    <rect x="8" y="8" width="12" height="12" rx="1" />
+    <path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3" />
+  </Icon>
+)
+
+export const MoreIcon = () => (
+  <Icon>
+    <circle cx="5" cy="12" r="1" />
+    <circle cx="12" cy="12" r="1" />
+    <circle cx="19" cy="12" r="1" />
+  </Icon>
+)

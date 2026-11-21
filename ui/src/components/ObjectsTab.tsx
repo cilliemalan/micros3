@@ -1,15 +1,27 @@
-// The Objects tab (U17): one level of a bucket under the route's prefix.
+// The Objects tab (U17, U18): one level of a bucket under the route's prefix.
 // A breadcrumb for the prefix, a filter on the start of names (sent to the
 // server, so it works across pages), and a table of folders and objects
 // with checkboxes, paged with "Load more". The page keys it on the
 // prefix, so a new folder starts with no filter and no selection.
+// Actions (U18): Upload, New folder and Delete selected in the toolbar, and
+// a row menu with Download, Copy or move, and Delete.
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Button } from "@ui-sdk/react/button"
 import { Checkbox, CheckboxGroup, CheckboxIndicator } from "@ui-sdk/react/checkbox"
 import { Field, FieldLabel } from "@ui-sdk/react/field"
 import { Input, InputClear, InputGroup } from "@ui-sdk/react/input"
-import { api, isApiError } from "../api"
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuItemIcon,
+  MenuSeparator,
+  MenuTrigger,
+  createMenuController,
+} from "@ui-sdk/react/menu"
+import { api, isApiError, type ObjectSummary } from "../api"
+import { downloadObject } from "../download"
 import { formatSize } from "../format"
 import {
   PAGE_SIZE,
@@ -24,9 +36,24 @@ import {
 } from "../objects"
 import { bucketRoute, routeHash } from "../route"
 import { Breadcrumb } from "./Breadcrumb"
-import { FileIcon, FolderIcon, RefreshIcon, SearchIcon } from "./Icons"
+import { CopyObjectDialog } from "./CopyObjectDialog"
+import { DeleteObjectsDialog } from "./DeleteObjectsDialog"
+import {
+  CopyIcon,
+  DownloadIcon,
+  FileIcon,
+  FolderIcon,
+  FolderPlusIcon,
+  MoreIcon,
+  RefreshIcon,
+  SearchIcon,
+  TrashIcon,
+  UploadIcon,
+} from "./Icons"
+import { NewFolderDialog } from "./NewFolderDialog"
 import { Time } from "./Time"
-import { notifyError } from "./Toasts"
+import { notify, notifyError } from "./Toasts"
+import { UploadDialog } from "./UploadDialog"
 
 /** How long typing in the filter waits before listing again. */
 const FILTER_DELAY_MS = 250
@@ -46,6 +73,11 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
   const [state, setState] = useState<State>(EMPTY)
   const [reloads, setReloads] = useState(0)
   const [selected, setSelected] = useState<string[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [newFolder, setNewFolder] = useState(false)
+  const [deleting, setDeleting] = useState<string[] | null>(null)
+  const [copying, setCopying] = useState<string | null>(null)
+  const [rowMenu] = useState(() => createMenuController<ObjectSummary>())
 
   useEffect(() => {
     const timer = window.setTimeout(() => setFilter(filterText), FILTER_DELAY_MS)
@@ -81,7 +113,27 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
     }
   }
 
-  const reload = () => setReloads((n) => n + 1)
+  const reload = useCallback(() => setReloads((n) => n + 1), [])
+
+  function removeRows(keys: string[]) {
+    const gone = new Set(keys)
+    setState((s) => ({ ...s, objects: s.objects.filter((o) => !gone.has(o.key)) }))
+    setSelected((list) => list.filter((k) => !gone.has(k)))
+  }
+
+  function rowAction(action: string) {
+    const object = rowMenu.getPayload()
+    if (!object) return
+    if (action === "download") {
+      downloadObject(bucket, object.key)
+      notify.success("Download started", { description: object.key })
+    } else if (action === "copy") {
+      setCopying(object.key)
+    } else if (action === "delete") {
+      setDeleting([object.key])
+    }
+  }
+
   const { folders, objects, next, loading, error } = state
   const firstLoad = loading && folders.length === 0 && objects.length === 0
   const missing = isApiError(error, "NoSuchBucket")
@@ -122,8 +174,19 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
               : countText(state, Boolean(next))}
         </p>
         <div className="spacer" />
-        <Button onClick={reload} disabled={loading}>
-          <RefreshIcon /> Refresh
+        {selected.length > 0 && (
+          <Button data-variant="destructive" onClick={() => setDeleting(selected)}>
+            <TrashIcon /> Delete selected
+          </Button>
+        )}
+        <Button onClick={() => setNewFolder(true)} disabled={Boolean(error)}>
+          <FolderPlusIcon /> New folder
+        </Button>
+        <Button data-variant="solid" onClick={() => setUploading(true)} disabled={Boolean(error)}>
+          <UploadIcon /> Upload
+        </Button>
+        <Button onClick={reload} disabled={loading} aria-label="Refresh" title="Refresh">
+          <RefreshIcon />
         </Button>
       </div>
       {error ? (
@@ -164,6 +227,9 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
                   </th>
                   <th scope="col">Last modified</th>
                   <th scope="col">ETag</th>
+                  <th scope="col" className="actions">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -179,6 +245,7 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
                     <td className="num muted">—</td>
                     <td className="muted">—</td>
                     <td className="muted">—</td>
+                    <td className="actions" />
                   </tr>
                 ))}
                 {objects.map((object) => {
@@ -205,6 +272,17 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
                       <td className="mono truncate etag" title={displayEtag(object.etag)}>
                         {displayEtag(object.etag)}
                       </td>
+                      <td className="actions">
+                        <MenuTrigger
+                          controller={rowMenu}
+                          payload={object}
+                          aria-label={`Actions for ${name}`}
+                          data-variant="ghost"
+                          data-size="sm"
+                        >
+                          <MoreIcon />
+                        </MenuTrigger>
+                      </td>
                     </tr>
                   )
                 })}
@@ -220,6 +298,62 @@ export function ObjectsTab({ bucket, prefix }: { bucket: string; prefix: string 
           )}
         </>
       )}
+
+      <Menu controller={rowMenu} onAction={rowAction}>
+        <MenuContent align="end">
+          <MenuItem value="download">
+            <MenuItemIcon>
+              <DownloadIcon />
+            </MenuItemIcon>
+            Download
+          </MenuItem>
+          <MenuItem value="copy">
+            <MenuItemIcon>
+              <CopyIcon />
+            </MenuItemIcon>
+            Copy or move…
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem value="delete">
+            <MenuItemIcon>
+              <TrashIcon />
+            </MenuItemIcon>
+            Delete…
+          </MenuItem>
+        </MenuContent>
+      </Menu>
+      <UploadDialog
+        bucket={bucket}
+        prefix={prefix}
+        open={uploading}
+        onOpenChange={setUploading}
+        onUploaded={reload}
+      />
+      <NewFolderDialog
+        bucket={bucket}
+        prefix={prefix}
+        open={newFolder}
+        onOpenChange={setNewFolder}
+        onCreated={(key) => {
+          notify.success("Folder created", { description: key })
+          reload()
+        }}
+      />
+      <DeleteObjectsDialog
+        bucket={bucket}
+        keys={deleting}
+        onClose={() => setDeleting(null)}
+        onDeleted={removeRows}
+      />
+      <CopyObjectDialog
+        bucket={bucket}
+        sourceKey={copying}
+        onClose={() => setCopying(null)}
+        onDone={(done) => {
+          if (done.move && done.sourceDeleted && copying) removeRows([copying])
+          if (done.destination.bucket === bucket) reload()
+        }}
+      />
     </div>
   )
 }
